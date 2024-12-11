@@ -20,6 +20,13 @@ from tkinter import filedialog
 import scipy.io as sio
 import logging
 
+# Try importing CuPy
+try:
+    import cupy as cp
+    USE_CUPY = True
+except ImportError:
+    USE_CUPY = False
+
 from utils.helper_functions import (confusion, loglikelihood, linrectify,
                                    logprior, posaverage, posterior, rates,
                                    record, download_extract_mnist, spikes,
@@ -29,6 +36,8 @@ from utils.helper_functions import (confusion, loglikelihood, linrectify,
 logging.basicConfig(filename='snn_experiment.log', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Log which library is being used
+logging.info(f"{'CuPy' if USE_CUPY else 'NumPy'} is being used.")
 
 def load_weights(file_path):
     """Loads weights from a .mat file."""
@@ -39,10 +48,8 @@ def load_weights(file_path):
         logging.error(f"Error loading weights: {e}")
         raise
 
-
 # Load the weights
 weights = load_weights(r'D:\SNN\dev_main\Nur_Spikes\weights.mat')
-
 
 def show_cm(cm, vis='on'):
     """Plots a confusion matrix."""
@@ -64,7 +71,6 @@ def show_cm(cm, vis='on'):
 
     if vis == 'on':
         plt.show()
-
 
 def show_images(images, category=None, num_cols=10):
     """Displays images from a dataset."""
@@ -105,7 +111,6 @@ def show_images(images, category=None, num_cols=10):
         plt.suptitle("All images")
     plt.show()
 
-
 def show_weights(weights, num_cols=25):
     """Displays all the receptive field structures as gray images."""
     if not isinstance(weights, np.ndarray):
@@ -129,7 +134,6 @@ def show_weights(weights, num_cols=25):
     plt.suptitle("Receptive fields")
     plt.show()
 
-
 def show_spikes(activity, parameters):
     """Displays a raster plot of spike activity."""
     plt.figure()
@@ -148,7 +152,6 @@ def show_spikes(activity, parameters):
     plt.title('Spike Raster Plot')
     plt.show()
 
-
 def show_spike_histogram(activity, parameters):
     """Displays a histogram of spike counts across neurons."""
     plt.figure()
@@ -159,7 +162,6 @@ def show_spike_histogram(activity, parameters):
     plt.ylabel('Number of Neurons')
     plt.title('Spike Count Histogram')
     plt.show()
-
 
 def show_spike_rate_plot(activity, parameters):
     """Displays a plot of spike rates over time, averaged across neurons."""
@@ -172,7 +174,6 @@ def show_spike_rate_plot(activity, parameters):
     plt.ylabel('Average Spike Rate')
     plt.title('Average Spike Rate Over Time')
     plt.show()
-
 
 def show_neuron_heatmap(activity, parameters):
     """Displays a heatmap of spike activity for each neuron."""
@@ -187,7 +188,6 @@ def show_neuron_heatmap(activity, parameters):
     plt.colorbar()
     plt.show()
 
-
 def load_images(image_paths):
     """Loads images from a list of file paths."""
     try:
@@ -200,7 +200,6 @@ def load_images(image_paths):
         logging.warning(f"Error loading images: {e}")
         return np.array([])  # Return an empty array
 
-
 def calculate_category_priors(labels):
     """Calculates category priors based on label frequencies."""
     if not isinstance(labels, np.ndarray):
@@ -212,7 +211,6 @@ def calculate_category_priors(labels):
     return np.array([
         label_counts[i] / num_images for i in range(len(label_counts))
     ])
-
 
 def run_experiment(images, labels, parameters, spike_formats, weights):
     """Runs a single decoding experiment."""
@@ -252,7 +250,6 @@ def run_experiment(images, labels, parameters, spike_formats, weights):
 
     logging.info("Finished decoding experiment.")
 
-
 def record_live(weights, parameters, input_queue, output_queue):
     """Continuously generates spikes for live decoding."""
     try:
@@ -267,13 +264,20 @@ def record_live(weights, parameters, input_queue, output_queue):
         logging.error(f"Error in record_live thread: {e}")
 
 
-def run_experiment_live(weights, parameters):
+
+
+
+def run_experiment_live(weights, parameters, record_live):  # Added record_live as argument
     """Runs a live decoding experiment with a GUI."""
     input_queue = queue.Queue()
     output_queue = queue.Queue()
 
     root = tk.Tk()
     root.title("Live SNN Experiment")
+
+    # Add a label to display the used library
+    library_label = tk.Label(root, text=f"Using {'CuPy' if USE_CUPY else 'NumPy'}")
+    library_label.pack()
 
     neuron_window = tk.Toplevel(root)
     neuron_window.title("Neuron Activity")
@@ -284,7 +288,9 @@ def run_experiment_live(weights, parameters):
     canvas_width = grid_size * 50
     canvas_height = grid_size * 50
 
-    neuron_canvas = tk.Canvas(neuron_window, width=canvas_width, height=canvas_height)
+    neuron_canvas = tk.Canvas(neuron_window,
+                              width=canvas_width,
+                              height=canvas_height)
     neuron_canvas.pack()
 
     neuron_rects = []
@@ -300,7 +306,9 @@ def run_experiment_live(weights, parameters):
 
     spike_count_label = tk.Label(root, text="Spike Count: 0")
     spike_count_label.pack()
-    spike_rate_label = tk.Label(root, text="Spike Rate: 0")
+    total_spike_count_label = tk.Label(root, text="Total Spike Count: 0")
+    total_spike_count_label.pack()
+    spike_rate_label = tk.Label(root, text="Spike Rate: 0 Hz")  # Added unit
     spike_rate_label.pack()
 
     fig, ax = plt.subplots()
@@ -337,35 +345,48 @@ def run_experiment_live(weights, parameters):
     upload_button = tk.Button(root, text="Upload Image", command=upload_image)
     upload_button.pack()
 
-    record_thread = threading.Thread(target=record_live,
+    record_thread = threading.Thread(target=record_live,  # Use the passed record_live function
                                      args=(weights, parameters,
                                            input_queue, output_queue))
     record_thread.daemon = True
     record_thread.start()
 
     start_time = time.time()
+    total_spikes = 0  # Initialize total spike count
 
     def update_plot():
-        nonlocal start_time
+        nonlocal start_time, total_spikes
         try:
             while not output_queue.empty():  # Process all available data
                 activity, timestamp = output_queue.get()
                 elapsed_time = timestamp - start_time
 
-                total_spikes = np.sum(activity)
-                spike_count_label.config(text=f"Spike Count: {total_spikes}")
+                spikes_this_frame = np.sum(activity)
+                total_spikes += spikes_this_frame  # Accumulate total spikes
+
+                spike_count_label.config(
+                    text=f"Spike Count: {spikes_this_frame}")
+                total_spike_count_label.config(
+                    text=f"Total Spike Count: {total_spikes}")
 
                 spike_rate = total_spikes / elapsed_time if elapsed_time > 0 else 0
-                spike_rate_label.config(text=f"Spike Rate: {spike_rate:.2f}")
+                spike_rate_label.config(
+                    text=f"Spike Rate: {spike_rate:.2f} Hz")  # Added unit
 
                 # Update neuron colors more efficiently
                 for neuron_idx, rect in enumerate(neuron_rects):
-                    neuron_canvas.itemconfig(rect, fill="red" if np.any(activity[neuron_idx, :] == 1) else "blue")
+                    neuron_canvas.itemconfig(
+                        rect,
+                        fill="red" if np.any(
+                            activity[neuron_idx, :] == 1) else "blue")
 
                 # Plot spikes
                 for neuron_idx in range(activity.shape[0]):
-                    spike_times = np.where(activity[neuron_idx, :] == 1)[0] * parameters['dt']
-                    if len(spike_times) > 0:  # Only plot if there are spikes
+                    spike_times = np.where(
+                        activity[neuron_idx, :] == 1)[0] * parameters['dt']
+                    if len(
+                            spike_times
+                    ) > 0:  # Only plot if there are spikes
                         ax.plot(spike_times + elapsed_time,
                                 np.ones_like(spike_times) * neuron_idx,
                                 '|k')
@@ -389,20 +410,24 @@ def run_experiment_live(weights, parameters):
     root.after(100, update_plot)
     root.mainloop()
 
+
+
+
 def run_experiment_activate(weights, parameters):
     """Activates the neural population with custom input."""
     input_queue = queue.Queue()
     output_queue = queue.Queue()
 
     record_thread = threading.Thread(target=record_live,
-                                       args=(weights, parameters,
-                                             input_queue, output_queue))
+                                     args=(weights, parameters, input_queue,
+                                           output_queue))
     record_thread.daemon = True
     record_thread.start()
 
     plt.ion()
     fig, ax = plt.subplots()
     line, = ax.plot([], [], '|k')
+    # decoder.py (continued)
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Neuron Index')
     ax.set_title('Neural Population Activity')
@@ -455,7 +480,6 @@ def run_experiment_activate(weights, parameters):
         record_thread.join()
         plt.ioff()
         plt.show()
-
 
 def cli_interaction(weights):
     """Provides a command-line interface for user interaction."""
@@ -524,7 +548,6 @@ def cli_interaction(weights):
 
     run_experiment(images, labels, parameters, spike_formats, weights)
 
-
 def main():
     parser = argparse.ArgumentParser(
         description="Run neural decoding experiments.")
@@ -535,11 +558,10 @@ def main():
     parser.add_argument("--data_dir",
                         default="data",
                         help="Directory to store data")
-    parser.add_argument(
-        "--spike_format",
-        choices=["raster", "histogram", "rate", "heatmap"],
-        default="raster",
-        help="Spike visualization format")
+    parser.add_argument("--spike_format",
+                        choices=["raster", "histogram", "rate", "heatmap"],
+                        default="raster",
+                        help="Spike visualization format")
     parser.add_argument("--params_file",
                         default="params.json",
                         help="JSON file with parameters")
@@ -585,7 +607,8 @@ def main():
 
         if args.live:
             logging.info("Beginning live decoding experiment:")
-            run_experiment_live(weights, parameters)
+            run_experiment_live(weights, parameters, record_live
+                               )  # Pass the record_live function
             logging.info("Finished live decoding experiment.")
         elif args.activate:
             logging.info("Activating neural population with custom input:")
@@ -619,7 +642,7 @@ def main():
                             show_neuron_heatmap(activity, parameters)
 
                         ll = loglikelihood(activity, images, weights,
-                                           parameters)
+                                          parameters)
                         lp = logprior(cp, images.shape[1])
                         pos = posterior(ll, lp)
                         cm, ind = confusion(pos)
@@ -637,7 +660,6 @@ def main():
                         show_images(pa)
 
             logging.info("Finished decoding experiments.")
-
 
 if __name__ == "__main__":
     main()
