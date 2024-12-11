@@ -1,260 +1,163 @@
+# helper_functions.py
 import numpy as np
 from scipy.stats import poisson
 from scipy.special import logsumexp
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from PIL import Image
 import requests
 import os
 import gzip
 import shutil
-import argparse
-import json
-from collections import Counter
-import time
-import threading
-import queue
-import tkinter as tk
-from tkinter import filedialog
 
-def linrectify(X): 
-    """
-    Performs linear rectification on input.
 
-    Args:
-        X (np.ndarray): Input array.
-
-    Returns:
-        np.ndarray: Linearly rectified array.
-    """
+def linrectify(X):
+    """Performs linear rectification on input."""
     return np.maximum(X, 0)
 
+
 def spikes(images, weights, parameters):
-    """
-    Generates spikes for the population of neurons based on images 
-    and synaptic weights.
-
-    Args:
-        images (np.ndarray): A 2D array of images.
-        weights (np.ndarray): A 2D array of synaptic weights.
-        parameters (dict): A dictionary of parameters containing 
-                            'dt' and 'gain'.
-
-    Returns:
-        np.ndarray: A 2D array of spike counts.
-    """
+    """Generates spikes for the population of neurons."""
     assert isinstance(images, np.ndarray), "Invalid 'images' array"
     assert isinstance(weights, np.ndarray), "Invalid 'weights' array"
-    assert 'dt' in parameters and parameters['dt'] > 0, "Invalid 'dt' parameter"
-    assert 'gain' in parameters and parameters['gain'] > 0, "Invalid 'gain' parameter"
+    assert 'dt' in parameters and parameters[
+        'dt'] > 0, "Invalid 'dt' parameter"
+    assert 'gain' in parameters and parameters[
+        'gain'] > 0, "Invalid 'gain' parameter"
 
     R = rates(images, weights, parameters)
-    S = poisson.rvs(parameters['dt'] * R)
+
+    # Use a smaller size for the random values
+    S = poisson.rvs(mu=parameters['dt'] * R,
+                    size=R.shape)  
     return S
 
 
 def confusion(pos):
-    """
-    Generates a confusion matrix for each category of image.
-
-    Args:
-        pos (np.ndarray): A 2D array of posterior probabilities, 
-                            where each column represents an image and 
-                            each row represents a category.
-
-    Returns:
-        tuple: A tuple containing the confusion matrix (cm) and 
-                the indices of the MAP estimates (ind).
-    """
+    """Generates a confusion matrix."""
     num_images = pos.shape[1]
     num_categories = int(num_images / 100)
 
     cm = np.zeros((num_categories, num_categories))
     ind = np.zeros(num_images, dtype=int)
 
+    mapind = np.argmax(pos, axis=0)
+    mapcat = mapind // 100
     for c in range(num_categories):
-        for i in range(100):
-            index = c * 100 + i
-            mapind = np.argmax(pos[:, index])
-            mapcat = mapind // 100  # Use integer division
-            cm[c, mapcat] += 1
-            ind[index] = mapind
+        cm[c, :] = np.bincount(mapcat[c * 100:(c + 1) * 100],
+                                minlength=num_categories)
+    ind = mapind
 
     cm = cm / cm.sum(axis=1, keepdims=True)
     return cm, ind
 
+
 def loglikelihood(activity, image_embeddings, weights, parameters):
-    """
-    Calculates the log likelihood of the activity given the 
-    image embeddings, weights, and parameters.
+    """Calculates the log likelihood of the activity."""
+    assert 'dt' in parameters and parameters[
+        'dt'] > 0, "Invalid 'dt' parameter"
+    assert 'gain' in parameters and parameters[
+        'gain'] > 0, "Invalid 'gain' parameter"
+    assert 'nrep' in parameters and parameters[
+        'nrep'] > 0, "Invalid 'nrep' parameter"
 
-    Args:
-        activity (np.ndarray): A 3D array of spike counts, where 
-                                dimensions represent neurons, images, 
-                                and repetitions.
-        image_embeddings (np.ndarray): A 2D array of image embeddings.
-        weights (np.ndarray): A 2D array of synaptic weights.
-        parameters (dict): A dictionary of parameters containing 
-                            'dt', 'gain', and 'nrep'.
-
-    Returns:
-        np.ndarray: A 2D array of log likelihoods.
-    """
-    # Validate parameters using assertions for brevity
-    assert 'dt' in parameters and parameters['dt'] > 0, "Invalid 'dt' parameter"
-    assert 'gain' in parameters and parameters['gain'] > 0, "Invalid 'gain' parameter"
-    assert 'nrep' in parameters and parameters['nrep'] > 0, "Invalid 'nrep' parameter"
-
-    # Validate input arrays using assertions
     assert isinstance(activity, np.ndarray), "Invalid 'activity' array"
-    assert isinstance(image_embeddings, np.ndarray), "Invalid 'image_embeddings' array"
+    assert isinstance(image_embeddings,
+                      np.ndarray), "Invalid 'image_embeddings' array"
     assert isinstance(weights, np.ndarray), "Invalid 'weights' array"
 
     meanact = np.ceil(np.mean(activity, axis=2)).astype(int)
     LL = np.zeros((image_embeddings.shape[1], image_embeddings.shape[1]))
     R = rates(image_embeddings, weights, parameters) * parameters['dt']
 
-    # Optimization: Vectorize the inner loop
     A = np.tile(meanact[:, :, np.newaxis], (1, 1, image_embeddings.shape[1]))
-    PA = poisson.pmf(A, R[:,:,np.newaxis]) 
-    LPA = np.log(PA + 1e-10)  # Add a small constant to avoid log(0)
-    LL = np.sum(LPA, axis=0) 
+    PA = poisson.pmf(A, R[:, :, np.newaxis])
+    LPA = np.log(PA + 1e-10)
+    LL = np.sum(LPA, axis=0)
 
     return LL
 
+
 def logprior(cp, num_images):
-    """
-    Returns the log prior for the images, given a specified 
-    probability for each category.
-
-    Args:
-        cp (np.ndarray): A 1D array of category probabilities.
-        num_images (int): The total number of images.
-
-    Returns:
-        np.ndarray: A 1D array of log priors.
-    """
-    assert isinstance(cp, np.ndarray) and np.all(cp > 0) and np.isclose(np.sum(cp), 1.0), "Invalid 'cp' array"
+    """Returns the log prior for the images."""
+    assert isinstance(cp, np.ndarray) and np.all(
+        cp > 0) and np.isclose(np.sum(cp), 1.0), "Invalid 'cp' array"
 
     num_categories = len(cp)
-    images_per_category = num_images // num_categories  # Use integer division
-    LP = np.zeros(num_images)
+    images_per_category = num_images // num_categories
 
-    # Optimization: Vectorize the loop
-    for c in range(num_categories):
-        LP[c * images_per_category:(c + 1) * images_per_category] = np.log(cp[c] / images_per_category)
+    LP = np.repeat(np.log(cp / images_per_category), images_per_category)
 
     return LP
 
+
 def posaverage(images, pos, navg):
-    """
-    Returns the average of images weighted by the posterior.
-
-    Args:
-        images (np.ndarray): A 2D array of images, where each 
-                                column represents an image.
-        pos (np.ndarray): A 2D array of posterior probabilities.
-        navg (int): The number of images to average.
-
-    Returns:
-        np.ndarray: A 2D array of posterior-averaged images.
-    """
+    """Returns the average of images weighted by the posterior."""
     assert isinstance(images, np.ndarray), "Invalid 'images' array"
-    assert isinstance(pos, np.ndarray) and pos.shape == (images.shape[1], images.shape[1]), "Invalid 'pos' array"
-    assert isinstance(navg, int) and 0 < navg <= images.shape[1], "Invalid 'navg' value"
+    assert isinstance(pos, np.ndarray) and pos.shape == (
+        images.shape[1], images.shape[1]), "Invalid 'pos' array"
+    assert isinstance(navg, int) and 0 < navg <= images.shape[
+        1], "Invalid 'navg' value"
 
     pa = np.zeros(images.shape)
-    ipos = np.argsort(pos, axis=0)[::-1]  # Sort in descending order
+    ipos = np.argsort(pos, axis=0)[::-1]
     spos = np.take_along_axis(pos, ipos, axis=0)
 
     for i in range(images.shape[1]):
         topimages = images[:, ipos[:navg, i]]
         pa[:, i] = np.sum(topimages * spos[:navg, i].reshape(1, -1), axis=1)
-        pa[:, i] = pa[:, i] / np.max(pa[:, i])  # Normalize
+        pa[:, i] = pa[:, i] / np.max(pa[:, i])
 
     return pa
 
+
 def posterior(LL, LP):
-    """
-    Calculates the posterior probability of each image given 
-    the log likelihoods and log priors.
+    """Calculates the posterior probability."""
+    assert isinstance(LL, np.ndarray) and LL.shape[
+        0] == LL.shape[1], "Invalid 'LL' array"
+    assert isinstance(LP, np.ndarray) and LP.shape[
+        0] == LL.shape[1], "Invalid 'LP' array"
 
-    Args:
-        LL (np.ndarray): A 2D array of log likelihoods.
-        LP (np.ndarray): A 1D array of log priors.
-
-    Returns:
-        np.ndarray: A 2D array of posterior probabilities.
-    """
-    assert isinstance(LL, np.ndarray) and LL.shape[0] == LL.shape[1], "Invalid 'LL' array"
-    assert isinstance(LP, np.ndarray) and LP.shape[0] == LL.shape[1], "Invalid 'LP' array"
-
-    LPOS = LL + LP.reshape(1, -1)  
+    LPOS = LL + LP.reshape(1, -1)
     POS = np.exp(LPOS - logsumexp(LPOS, axis=0, keepdims=True))
     return POS
 
+
 def rates(images, weights, parameters):
-    """
-    Calculates the firing rates of the neurons given the images, 
-    weights, and parameters.
-
-    Args:
-        images (np.ndarray): A 2D array of images.
-        weights (np.ndarray): A 2D array of synaptic weights.
-        parameters (dict): A dictionary of parameters containing 
-                            'dt' and 'gain'.
-
-    Returns:
-        np.ndarray: A 2D array of firing rates.
-    """
+    """Calculates the firing rates of the neurons."""
     assert isinstance(images, np.ndarray), "Invalid 'images' array"
     assert isinstance(weights, np.ndarray), "Invalid 'weights' array"
-    assert 'dt' in parameters and parameters['dt'] > 0, "Invalid 'dt' parameter"
-    assert 'gain' in parameters and parameters['gain'] > 0, "Invalid 'gain' parameter"
+    assert 'dt' in parameters and parameters[
+        'dt'] > 0, "Invalid 'dt' parameter"
+    assert 'gain' in parameters and parameters[
+        'gain'] > 0, "Invalid 'gain' parameter"
 
     R = weights @ images
     R = linrectify(R) * parameters['gain']
     return R
 
+
 def record(images, weights, parameters):
-    """
-    Simulates an experimental recording session by generating 
-    spikes from the neuron population.
-
-    Args:
-        images (np.ndarray): A 2D array of images.
-        weights (np.ndarray): A 2D array of synaptic weights.
-        parameters (dict): A dictionary of parameters containing 
-                            'dt', 'gain', and 'nrep'.
-
-    Returns:
-        np.ndarray: A 3D array of spike counts.
-    """
+    """Simulates an experimental recording session."""
     assert isinstance(images, np.ndarray), "Invalid 'images' array"
     assert isinstance(weights, np.ndarray), "Invalid 'weights' array"
-    assert 'dt' in parameters and parameters['dt'] > 0, "Invalid 'dt' parameter"
-    assert 'gain' in parameters and parameters['gain'] > 0, "Invalid 'gain' parameter"
-    assert 'nrep' in parameters and parameters['nrep'] > 0, "Invalid 'nrep' parameter"
+    assert 'dt' in parameters and parameters[
+        'dt'] > 0, "Invalid 'dt' parameter"
+    assert 'gain' in parameters and parameters[
+        'gain'] > 0, "Invalid 'gain' parameter"
+    assert 'nrep' in parameters and parameters[
+        'nrep'] > 0, "Invalid 'nrep' parameter"
 
-    activity = np.zeros((weights.shape[0], images.shape[1], parameters['nrep']))
+    activity = np.zeros((weights.shape[0], images.shape[1],
+                        parameters['nrep']))
 
     for n in range(parameters['nrep']):
         activity[:, :, n] = spikes(images, weights, parameters)
 
     return activity
 
+
 def load_mnist_images(data_dir, kind="train"):
-    """
-    Loads MNIST images from the specified directory.
-
-    Args:
-        data_dir (str): The directory containing the MNIST data files.
-        kind (str, optional): The type of data to load ('train' or 'test'). 
-                            Defaults to 'train'.
-
-    Returns:
-        tuple: A tuple containing the images and labels.
-    """
+    """Loads MNIST images."""
     if kind == "train":
         labels_path = os.path.join(data_dir, 'train-labels-idx1-ubyte')
         images_path = os.path.join(data_dir, 'train-images-idx3-ubyte')
@@ -270,20 +173,16 @@ def load_mnist_images(data_dir, kind="train"):
 
     with open(images_path, 'rb') as imgpath:
         imgpath.read(16)
-        images = np.frombuffer(imgpath.read(), dtype=np.uint8).reshape(len(labels), 784).T
+        images = np.frombuffer(imgpath.read(),
+                               dtype=np.uint8).reshape(len(labels),
+                                                       784).T
 
     return images, labels
 
+
 def load_cifar10_images(data_dir):
-    """
-    Loads CIFAR-10 images from the specified directory.
+    """Loads CIFAR-10 images."""
 
-    Args:
-        data_dir (str): The directory to store the downloaded data.
-
-    Returns:
-        tuple: A tuple containing the images and labels.
-    """
     def unpickle(file):
         import pickle
         with open(file, 'rb') as fo:
@@ -313,32 +212,34 @@ def load_cifar10_images(data_dir):
     images = []
     labels = []
     for i in range(1, 6):
-        batch_file = os.path.join(data_dir, "cifar-10-batches-py", f"data_batch_{i}")
+        batch_file = os.path.join(data_dir, "cifar-10-batches-py",
+                                  f"data_batch_{i}")
         batch_data = unpickle(batch_file)
         images.append(batch_data[b'data'])
         labels.extend(batch_data[b'labels'])
 
     images = np.concatenate(images).reshape(-1, 3, 32, 32).transpose(0, 2, 3, 1)
-    images = np.array([Image.fromarray(img).convert('L') for img in images])
-    images = np.array([np.array(img).flatten() for img in images]).T
+
+    # Convert to grayscale
+    images = np.array([
+        np.array(Image.fromarray(img).convert('L')).flatten()
+        for img in images
+    ]).T
     labels = np.array(labels)
     return images, labels
 
-def download_extract_mnist(data_dir):
-    """
-    Downloads and extracts the MNIST dataset.
 
-    Args:
-        data_dir (str): The directory to store the downloaded data.
-    """
+def download_extract_mnist(data_dir):
+    """Downloads and extracts the MNIST dataset."""
     if not os.path.exists(data_dir):
         os.makedirs(data_dir)
 
     base_url = "http://yann.lecun.com/exdb/mnist/"
-    files = ["train-images-idx3-ubyte.gz",
-             "train-labels-idx1-ubyte.gz",
-             "t10k-images-idx3-ubyte.gz",
-             "t10k-labels-idx1-ubyte.gz",
+    files = [
+        "train-images-idx3-ubyte.gz",
+        "train-labels-idx1-ubyte.gz",
+        "t10k-images-idx3-ubyte.gz",
+        "t10k-labels-idx1-ubyte.gz",
     ]
 
     for file in files:
@@ -353,7 +254,7 @@ def download_extract_mnist(data_dir):
                         f.write(chunk)
             except requests.exceptions.RequestException as e:
                 print(f"Error downloading {file}: {e}")
-                # If download fails, try a mirror
+                # Try a mirror if the main download fails
                 mirror_url = "https://github.com/zalandoresearch/fashion-mnist/raw/master/data/fashion/"
                 print(f"Trying to download from mirror: {mirror_url + file}")
                 try:
@@ -374,4 +275,3 @@ def download_extract_mnist(data_dir):
         except (gzip.BadGzipFile, OSError) as e:
             print(f"Error extracting {file}: {e}")
             return
-

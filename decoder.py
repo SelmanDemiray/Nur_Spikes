@@ -1,3 +1,4 @@
+# decoder.py
 import numpy as np
 from scipy.stats import poisson
 from scipy.special import logsumexp
@@ -19,50 +20,35 @@ from tkinter import filedialog
 import scipy.io as sio
 import logging
 
-
 from utils.helper_functions import (confusion, loglikelihood, linrectify,
-                                   logprior, posaverage, posterior, rates, 
+                                   logprior, posaverage, posterior, rates,
                                    record, download_extract_mnist, spikes,
-                                   load_mnist_images, load_cifar10_images) 
-
+                                   load_mnist_images, load_cifar10_images)
 
 # Configure logging
-logging.basicConfig(filename='snn_experiment.log', level=logging.INFO, 
+logging.basicConfig(filename='snn_experiment.log', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Load weights from .mat file
+
 def load_weights(file_path):
-    """
-    Loads weights from a .mat file.
-
-    Args:
-        file_path (str): Path to the .mat file.
-
-    Returns:
-        np.ndarray: Loaded weight matrix.
-    """
+    """Loads weights from a .mat file."""
     try:
         mat_data = sio.loadmat(file_path)
         return mat_data['weights']
     except (FileNotFoundError, KeyError) as e:
         logging.error(f"Error loading weights: {e}")
-        raise  # Re-raise the exception to halt execution
+        raise
+
 
 # Load the weights
 weights = load_weights(r'D:\SNN\dev_main\Nur_Spikes\weights.mat')
 
-# --- Visualization Functions ---
-def show_cm(cm, vis='on'):
-    """
-    Plots a confusion matrix.
 
-    Args:
-        cm (np.ndarray): A 2D array representing the confusion matrix.
-        vis (str, optional): Whether to display the plot ('on') or 
-                            not ('off'). Defaults to 'on'.
-    """
+def show_cm(cm, vis='on'):
+    """Plots a confusion matrix."""
     if not (isinstance(cm, np.ndarray) and cm.shape[0] == cm.shape[1]):
-        logging.warning("Invalid confusion matrix provided. Skipping visualization.")
+        logging.warning(
+            "Invalid confusion matrix provided. Skipping visualization.")
         return
 
     num_categories = cm.shape[0]
@@ -79,25 +65,17 @@ def show_cm(cm, vis='on'):
     if vis == 'on':
         plt.show()
 
-def show_images(images, category=None, num_cols=10):
-    """
-    Displays images from a dataset.
 
-    Args:
-        images (np.ndarray): A 2D array of images, where each column 
-                            represents an image.
-        category (int, optional): If provided, displays images only 
-                                from the specified category. 
-                                Defaults to None.
-        num_cols (int, optional): The number of columns in the image 
-                                grid. Defaults to 10.
-    """
+def show_images(images, category=None, num_cols=10):
+    """Displays images from a dataset."""
     if not isinstance(images, np.ndarray):
-        logging.warning("Invalid image data provided. Skipping visualization.")
+        logging.warning(
+            "Invalid image data provided. Skipping visualization.")
         return
 
     if category is not None:
-        if not (isinstance(category, int) and 0 <= category <= (images.shape[1] / 100) - 1):
+        if not (isinstance(category, int)
+                and 0 <= category <= (images.shape[1] / 100) - 1):
             logging.warning("Invalid category value. Displaying all images.")
             category = None
 
@@ -115,7 +93,9 @@ def show_images(images, category=None, num_cols=10):
 
     for i in range(num_images):
         plt.subplot(num_rows, num_cols, i + 1)
-        plt.imshow(images[:, i].reshape(int(np.sqrt(images.shape[0])), int(np.sqrt(images.shape[0]))).T)
+        plt.imshow(
+            images[:, i].reshape(int(np.sqrt(images.shape[0])),
+                                 int(np.sqrt(images.shape[0]))).T)
         plt.axis('equal')
         plt.axis('off')
 
@@ -125,17 +105,12 @@ def show_images(images, category=None, num_cols=10):
         plt.suptitle("All images")
     plt.show()
 
-def show_weights(weights, num_cols=25):
-    """
-    Displays all the receptive field structures as gray images.
 
-    Args:
-        weights (np.ndarray): A 2D array of synaptic weights.
-        num_cols (int, optional): The number of columns in the grid of 
-                                receptive fields. Defaults to 25.
-    """
+def show_weights(weights, num_cols=25):
+    """Displays all the receptive field structures as gray images."""
     if not isinstance(weights, np.ndarray):
-        logging.warning("Invalid weight data provided. Skipping visualization.")
+        logging.warning(
+            "Invalid weight data provided. Skipping visualization.")
         return
 
     num_fields = weights.shape[0]
@@ -145,34 +120,46 @@ def show_weights(weights, num_cols=25):
 
     for i in range(num_fields):
         plt.subplot(num_rows, num_cols, i + 1)
-        plt.imshow(weights[i, :].reshape(int(np.sqrt(weights.shape[1])), int(np.sqrt(weights.shape[1]))).T)
+        plt.imshow(
+            weights[i, :].reshape(int(np.sqrt(weights.shape[1])),
+                                  int(np.sqrt(weights.shape[1]))).T)
         plt.axis('equal')
         plt.axis('off')
 
     plt.suptitle("Receptive fields")
     plt.show()
 
+
 def show_spikes(activity, parameters):
     """Displays a raster plot of spike activity."""
     plt.figure()
+
+    # Optimized plotting: Collect all spike times and plot once per neuron
     for neuron_idx in range(activity.shape[0]):
-        for rep in range(activity.shape[2]):
-            spike_times = np.where(activity[neuron_idx, :, rep] == 1)[0] * parameters['dt']
-            plt.plot(spike_times, np.ones_like(spike_times) * neuron_idx, '|k')
+        spike_times = np.where(activity[neuron_idx, :, :] == 1)[0] * parameters[
+            'dt']
+        plt.plot(spike_times,
+                 np.ones_like(spike_times) * neuron_idx,
+                 '|k',
+                 markersize=1)  # Smaller marker size
+
     plt.xlabel('Time (s)')
     plt.ylabel('Neuron Index')
     plt.title('Spike Raster Plot')
     plt.show()
 
+
 def show_spike_histogram(activity, parameters):
     """Displays a histogram of spike counts across neurons."""
     plt.figure()
-    all_spike_counts = np.sum(activity, axis=(1, 2))  # Sum across images and repetitions
+    all_spike_counts = np.sum(
+        activity, axis=(1, 2))  # Sum across images and repetitions
     plt.hist(all_spike_counts, bins=20)
     plt.xlabel('Spike Count')
     plt.ylabel('Number of Neurons')
     plt.title('Spike Count Histogram')
     plt.show()
+
 
 def show_spike_rate_plot(activity, parameters):
     """Displays a plot of spike rates over time, averaged across neurons."""
@@ -186,10 +173,14 @@ def show_spike_rate_plot(activity, parameters):
     plt.title('Average Spike Rate Over Time')
     plt.show()
 
+
 def show_neuron_heatmap(activity, parameters):
-    """Displays a heatmap of spike activity for each neuron across all images and repetitions."""
+    """Displays a heatmap of spike activity for each neuron."""
     plt.figure()
-    plt.imshow(np.sum(activity, axis=2), cmap='hot', interpolation='nearest', aspect='auto')  # Sum across repetitions
+    plt.imshow(np.sum(activity, axis=2),
+               cmap='hot',
+               interpolation='nearest',
+               aspect='auto')
     plt.xlabel('Image Index')
     plt.ylabel('Neuron Index')
     plt.title('Neuron Spike Activity Heatmap')
@@ -197,62 +188,34 @@ def show_neuron_heatmap(activity, parameters):
     plt.show()
 
 
-# --- Data Loading and Preprocessing ---
 def load_images(image_paths):
-    """
-    Loads images from a list of file paths and returns them as a numpy array.
+    """Loads images from a list of file paths."""
+    try:
+        # Assuming all images have the same size and mode
+        return np.array([
+            np.array(Image.open(path).convert('L')).flatten()
+            for path in image_paths
+        ]).T
+    except (FileNotFoundError, PIL.UnidentifiedImageError) as e:
+        logging.warning(f"Error loading images: {e}")
+        return np.array([])  # Return an empty array
 
-    Args:
-        image_paths (list): A list of image file paths.
-
-    Returns:
-        np.ndarray: A 2D array of images, where each column represents an image.
-    """
-    images = []
-    for path in image_paths:
-        try:
-            img = Image.open(path).convert('L')
-            img_array = np.array(img).flatten()
-            images.append(img_array)
-        except (FileNotFoundError, PIL.UnidentifiedImageError) as e:
-            logging.warning(f"Error loading image {path}: {e}")
-    return np.array(images).T
 
 def calculate_category_priors(labels):
-    """
-    Calculates category priors based on label frequencies.
-
-    Args:
-        labels (np.ndarray): A 1D array of labels.
-
-    Returns:
-        np.ndarray: A 1D array of category priors.
-    """
+    """Calculates category priors based on label frequencies."""
     if not isinstance(labels, np.ndarray):
         logging.warning("Invalid label data provided. Using uniform priors.")
-        # Assuming 10 categories if labels are invalid
-        return np.full(10, 1/10)  
+        return np.full(10, 1 / 10)
 
     label_counts = Counter(labels)
     num_images = len(labels)
-    cp = np.array([label_counts[i] / num_images for i in range(len(label_counts))])
-    return cp
+    return np.array([
+        label_counts[i] / num_images for i in range(len(label_counts))
+    ])
 
 
-# --- Experiment Functions ---
 def run_experiment(images, labels, parameters, spike_formats, weights):
-    """
-    Runs a single decoding experiment with the given parameters.
-
-    Args:
-        images (np.ndarray): A 2D array of images.
-        labels (np.ndarray): A 1D array of labels.
-        parameters (dict): A dictionary of parameters.
-        spike_formats (list): A list of formats for visualizing spike 
-                            activity ('raster', 'histogram', 'rate', 
-                            'heatmap').
-        weights (np.ndarray): Pre-loaded weight matrix.
-    """
+    """Runs a single decoding experiment."""
     cp = calculate_category_priors(labels)
 
     logging.info("Beginning decoding experiment:")
@@ -291,94 +254,79 @@ def run_experiment(images, labels, parameters, spike_formats, weights):
 
 
 def record_live(weights, parameters, input_queue, output_queue):
-    """
-    Continuously generates spikes for the population of neurons 
-    based on images received from the input queue.
-
-    Args:
-        weights (np.ndarray): A 2D array of synaptic weights.
-        parameters (dict): A dictionary of parameters containing 
-                        'dt' and 'gain'.
-        input_queue (queue.Queue): A queue to receive input images.
-        output_queue (queue.Queue): A queue to send spike data.
-    """
+    """Continuously generates spikes for live decoding."""
     try:
         while True:
-            images = input_queue.get()  # Get the next image(s) from the queue
+            images = input_queue.get()
             if images is None:
-                break  # Sentinel value to stop the thread
+                break
 
             activity = spikes(images, weights, parameters)
-            output_queue.put((activity, time.time()))  # Send spike data with timestamp
+            output_queue.put((activity, time.time()))
     except Exception as e:
         logging.error(f"Error in record_live thread: {e}")
 
 
 def run_experiment_live(weights, parameters):
-    """
-    Runs a live decoding experiment with a GUI for image input.
-    """
+    """Runs a live decoding experiment with a GUI."""
     input_queue = queue.Queue()
     output_queue = queue.Queue()
 
-    # --- GUI Setup ---
     root = tk.Tk()
     root.title("Live SNN Experiment")
 
-    # --- Neuron Visualization Window ---
     neuron_window = tk.Toplevel(root)
     neuron_window.title("Neuron Activity")
 
-    neuron_canvas = tk.Canvas(neuron_window, width=500, height=500)  # Adjust size as needed
-    neuron_canvas.pack()
-
+    # Calculate canvas dimensions based on the number of neurons
     num_neurons = weights.shape[0]
     grid_size = int(np.ceil(np.sqrt(num_neurons)))
+    canvas_width = grid_size * 50
+    canvas_height = grid_size * 50
+
+    neuron_canvas = tk.Canvas(neuron_window, width=canvas_width, height=canvas_height)
+    neuron_canvas.pack()
+
     neuron_rects = []
     for i in range(num_neurons):
         row = i // grid_size
         col = i % grid_size
-        x1 = col * 50  # Adjust spacing as needed
+        x1 = col * 50
         y1 = row * 50
         x2 = x1 + 40
         y2 = y1 + 40
         rect = neuron_canvas.create_rectangle(x1, y1, x2, y2, fill="blue")
         neuron_rects.append(rect)
 
-    # --- Spike Information Labels ---
     spike_count_label = tk.Label(root, text="Spike Count: 0")
     spike_count_label.pack()
     spike_rate_label = tk.Label(root, text="Spike Rate: 0")
     spike_rate_label.pack()
 
-    # Figure for the raster plot
     fig, ax = plt.subplots()
-    line, = ax.plot([], [], '|k')  # For raster plot
+    line, = ax.plot([], [], '|k')  # Initialize line object for raster plot
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Neuron Index')
     ax.set_title('Live Spike Raster Plot')
     canvas = FigureCanvasTkAgg(fig, master=root)
     canvas.get_tk_widget().pack()
 
-    # Image frame
     image_frame = tk.Frame(root)
     image_frame.pack()
     image_label = tk.Label(image_frame, text="No Image Loaded")
     image_label.pack()
 
-    # Static input and upload button
-    static_input = np.random.rand(784, 1)  # Initial static input
+    static_input = np.random.rand(784, 1)
+
     def upload_image():
         nonlocal static_input
         file_path = filedialog.askopenfilename(
-            filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.gif")]
-        )
+            filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.gif")])
         if file_path:
             try:
-                # Load and preprocess the image
                 image = Image.open(file_path).convert('L')
-                image = image.resize((28, 28))  # Resize to match MNIST size
-                static_input = np.array(image).flatten().reshape(784, 1)  # Update static input
+                image = image.resize((28, 28))
+                static_input = np.array(image).flatten().reshape(784, 1)
                 image_label.config(text=file_path)
             except Exception as e:
                 logging.warning(f"Error loading image: {e}")
@@ -389,11 +337,9 @@ def run_experiment_live(weights, parameters):
     upload_button = tk.Button(root, text="Upload Image", command=upload_image)
     upload_button.pack()
 
-    # --- SNN Thread ---
-    record_thread = threading.Thread(
-        target=record_live, 
-        args=(weights, parameters, input_queue, output_queue)
-    )
+    record_thread = threading.Thread(target=record_live,
+                                     args=(weights, parameters,
+                                           input_queue, output_queue))
     record_thread.daemon = True
     record_thread.start()
 
@@ -402,71 +348,58 @@ def run_experiment_live(weights, parameters):
     def update_plot():
         nonlocal start_time
         try:
-            if not output_queue.empty():
+            while not output_queue.empty():  # Process all available data
                 activity, timestamp = output_queue.get()
                 elapsed_time = timestamp - start_time
 
-                # Update spike count
-                total_spikes = np.sum(activity)  
+                total_spikes = np.sum(activity)
                 spike_count_label.config(text=f"Spike Count: {total_spikes}")
 
-                # Update spike rate
-                spike_rate = total_spikes / elapsed_time 
+                spike_rate = total_spikes / elapsed_time if elapsed_time > 0 else 0
                 spike_rate_label.config(text=f"Spike Rate: {spike_rate:.2f}")
 
-                # Update neuron visualization 
-                for neuron_idx in range(activity.shape[0]):
-                    if np.any(activity[neuron_idx, :] == 1):  # Check if neuron fired
-                        neuron_canvas.itemconfig(neuron_rects[neuron_idx], fill="red") 
-                    else:
-                        neuron_canvas.itemconfig(neuron_rects[neuron_idx], fill="blue")
+                # Update neuron colors more efficiently
+                for neuron_idx, rect in enumerate(neuron_rects):
+                    neuron_canvas.itemconfig(rect, fill="red" if np.any(activity[neuron_idx, :] == 1) else "blue")
 
-                # Update the raster plot
+                # Plot spikes
                 for neuron_idx in range(activity.shape[0]):
                     spike_times = np.where(activity[neuron_idx, :] == 1)[0] * parameters['dt']
-                    ax.plot(spike_times + elapsed_time,
-                            np.ones_like(spike_times) * neuron_idx, '|k')
+                    if len(spike_times) > 0:  # Only plot if there are spikes
+                        ax.plot(spike_times + elapsed_time,
+                                np.ones_like(spike_times) * neuron_idx,
+                                '|k')
 
                 ax.relim()
                 ax.autoscale_view(True, True, True)
                 canvas.draw()
 
-            # Provide input to the SNN
-            input_queue.put(static_input) 
+            input_queue.put(static_input)
 
         except KeyboardInterrupt:
             logging.info("Stopping experiment...")
-            input_queue.put(None)
-            record_thread.join()
-            root.destroy()  # Close the GUI window
+            input_queue.put(None)  # Signal the thread to stop
+            record_thread.join()  # Wait for the thread to finish
+            root.destroy()
             return
-        
-        root.after(100, update_plot)  # Update every 100ms
 
-    root.after(100, update_plot)  # Start the plot update loop
+        finally:
+            root.after(100, update_plot)  # Reschedule update
+
+    root.after(100, update_plot)
     root.mainloop()
 
-
 def run_experiment_activate(weights, parameters):
-    """
-    Activates the neural population with custom input and visualizes 
-    the spike activity in real-time.
-
-    Args:
-        weights (np.ndarray): A 2D array of synaptic weights.
-        parameters (dict): A dictionary of parameters.
-    """
+    """Activates the neural population with custom input."""
     input_queue = queue.Queue()
     output_queue = queue.Queue()
 
-    # Start the recording thread
     record_thread = threading.Thread(target=record_live,
                                        args=(weights, parameters,
                                              input_queue, output_queue))
     record_thread.daemon = True
     record_thread.start()
 
-    # Set up the live plot
     plt.ion()
     fig, ax = plt.subplots()
     line, = ax.plot([], [], '|k')
@@ -478,29 +411,36 @@ def run_experiment_activate(weights, parameters):
 
     try:
         while True:
-            # Get new input images from user
-            input_str = input("Enter input values (comma-separated, or 'q' to quit): ")
+            input_str = input(
+                "Enter input values (comma-separated, or 'q' to quit): ")
             if input_str.lower() == 'q':
                 break
 
             try:
-                input_values = [float(val.strip()) for val in input_str.split(",")]
-                num_pixels = weights.shape[1]  # Get the number of pixels from weights
-                new_images = np.array(input_values).reshape(num_pixels, 1)  # Reshape to match the expected format
+                input_values = [
+                    float(val.strip()) for val in input_str.split(",")
+                ]
+                num_pixels = weights.shape[
+                    1]  # Get the number of pixels from weights
+                new_images = np.array(input_values).reshape(
+                    num_pixels, 1)  # Reshape
                 input_queue.put(new_images)
             except ValueError:
-                print("Invalid input format. Please enter comma-separated numbers.")
+                print(
+                    "Invalid input format. Please enter comma-separated numbers."
+                )
                 continue
 
             if not output_queue.empty():
                 activity, timestamp = output_queue.get()
                 elapsed_time = timestamp - start_time
 
-                # Update the raster plot
                 for neuron_idx in range(activity.shape[0]):
-                    spike_times = np.where(activity[neuron_idx, :] == 1)[0] * parameters['dt']
+                    spike_times = np.where(
+                        activity[neuron_idx, :] == 1)[0] * parameters['dt']
                     ax.plot(spike_times + elapsed_time,
-                            np.ones_like(spike_times) * neuron_idx, '|k')
+                            np.ones_like(spike_times) * neuron_idx,
+                            '|k')
 
                 ax.relim()
                 ax.autoscale_view(True, True, True)
@@ -517,15 +457,16 @@ def run_experiment_activate(weights, parameters):
         plt.show()
 
 
-def cli_interaction(weights):  # Add weights as an argument
+def cli_interaction(weights):
     """Provides a command-line interface for user interaction."""
     print("Welcome to the Neural Decoding Experiment!")
 
-    # Dataset selection
-    dataset_choice = input("Select dataset (1: MNIST, 2: CIFAR-10, 3: Other): ")
+    dataset_choice = input(
+        "Select dataset (1: MNIST, 2: CIFAR-10, 3: Other): ")
     while dataset_choice not in ["1", "2", "3"]:
         print("Invalid choice. Please enter 1, 2, or 3.")
-        dataset_choice = input("Select dataset (1: MNIST, 2: CIFAR-10, 3: Other): ")
+        dataset_choice = input(
+            "Select dataset (1: MNIST, 2: CIFAR-10, 3: Other): ")
 
     if dataset_choice == "1":
         dataset = "mnist"
@@ -538,17 +479,20 @@ def cli_interaction(weights):  # Add weights as an argument
         images, labels = load_cifar10_images(data_dir)
     else:
         dataset = "other"
-        image_paths = []  # Replace with your image loading logic
+        image_paths = []
         images = load_images(image_paths)
-        labels = []  # Replace with your label loading logic
+        labels = []
 
-    # Spike format selection
     spike_formats = []
     while True:
-        spike_format = input("Select spike format (1: Raster plot, 2: Histogram, 3: Rate plot, 4: Heatmap, 5: Done): ")
+        spike_format = input(
+            "Select spike format (1: Raster plot, 2: Histogram, 3: Rate plot, 4: Heatmap, 5: Done): "
+        )
         while spike_format not in ["1", "2", "3", "4", "5"]:
             print("Invalid choice. Please enter 1, 2, 3, 4, or 5.")
-            spike_format = input("Select spike format (1: Raster plot, 2: Histogram, 3: Rate plot, 4: Heatmap, 5: Done): ")
+            spike_format = input(
+                "Select spike format (1: Raster plot, 2: Histogram, 3: Rate plot, 4: Heatmap, 5: Done): "
+            )
         if spike_format == "5":
             break
         spike_formats.append({
@@ -558,40 +502,63 @@ def cli_interaction(weights):  # Add weights as an argument
             "4": "heatmap"
         }[spike_format])
 
-    # Parameter input with validation
     parameters = {}
     while True:
         try:
-            parameters['dt'] = float(input("Enter time step (dt) (positive value): "))
+            parameters['dt'] = float(
+                input("Enter time step (dt) (positive value): "))
             if parameters['dt'] <= 0:
                 raise ValueError("Time step must be a positive value.")
-            parameters['gain'] = float(input("Enter neuron gain (positive value): "))
+            parameters['gain'] = float(
+                input("Enter neuron gain (positive value): "))
             if parameters['gain'] <= 0:
                 raise ValueError("Gain must be a positive value.")
-            parameters['nrep'] = int(input("Enter number of repetitions (positive integer): "))
+            parameters['nrep'] = int(
+                input("Enter number of repetitions (positive integer): "))
             if parameters['nrep'] <= 0:
-                raise ValueError("Number of repetitions must be a positive integer.")
-            break  # Exit loop if all inputs are valid
+                raise ValueError(
+                    "Number of repetitions must be a positive integer.")
+            break
         except ValueError as e:
             print(f"Invalid input: {e}")
 
-    # Run the experiment
-    run_experiment(images, labels, parameters, spike_formats, weights)  # Pass weights here
+    run_experiment(images, labels, parameters, spike_formats, weights)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run neural decoding experiments.")
-    parser.add_argument("--dataset", choices=["mnist", "cifar10", "other"], default="mnist", help="Dataset to use (mnist, cifar10 or other)")
-    parser.add_argument("--data_dir", default="data", help="Directory to store downloaded data")
-    parser.add_argument("--spike_format", choices=["raster", "histogram", "rate", "heatmap"], default="raster", help="Spike visualization format")
-    parser.add_argument("--params_file", default="params.json", help="JSON file with experiment parameters")
-    parser.add_argument("--interactive", "-i", action="store_true", help="Run in interactive mode")
-    parser.add_argument("--live", "-l", action="store_true", help="Run in live mode")
-    parser.add_argument("--activate", "-a", action="store_true", help="Activate neural population with custom input")
+    parser = argparse.ArgumentParser(
+        description="Run neural decoding experiments.")
+    parser.add_argument("--dataset",
+                        choices=["mnist", "cifar10", "other"],
+                        default="mnist",
+                        help="Dataset to use")
+    parser.add_argument("--data_dir",
+                        default="data",
+                        help="Directory to store data")
+    parser.add_argument(
+        "--spike_format",
+        choices=["raster", "histogram", "rate", "heatmap"],
+        default="raster",
+        help="Spike visualization format")
+    parser.add_argument("--params_file",
+                        default="params.json",
+                        help="JSON file with parameters")
+    parser.add_argument("--interactive",
+                        "-i",
+                        action="store_true",
+                        help="Run in interactive mode")
+    parser.add_argument("--live",
+                        "-l",
+                        action="store_true",
+                        help="Run in live mode")
+    parser.add_argument("--activate",
+                        "-a",
+                        action="store_true",
+                        help="Activate with custom input")
     args = parser.parse_args()
 
     if args.interactive:
-        cli_interaction(weights)  # Pass weights here
+        cli_interaction(weights)
     else:
         if args.dataset == "mnist":
             download_extract_mnist(args.data_dir)
@@ -599,11 +566,10 @@ def main():
         elif args.dataset == "cifar10":
             images, labels = load_cifar10_images(args.data_dir)
         elif args.dataset == "other":
-            image_paths = []  # Replace with your image loading logic
+            image_paths = []
             images = load_images(image_paths)
-            labels = []  # Replace with your label loading logic
+            labels = []
 
-        # Load parameters from JSON file
         try:
             with open(args.params_file, 'r') as f:
                 params_config = json.load(f)
@@ -630,14 +596,18 @@ def main():
             for dt in dts:
                 for gain in gains:
                     for nrep in nreps:
-                        logging.info(f"Running case with dt = {dt:.3f} s, gain = {gain:.1f}, nreps = {nrep}...")
+                        logging.info(
+                            f"Running case with dt = {dt:.3f} s, gain = {gain:.1f}, nreps = {nrep}..."
+                        )
                         parameters['dt'] = dt
                         parameters['gain'] = gain
                         parameters['nrep'] = nrep
 
                         activity = record(images, weights, parameters)
 
-                        spike_formats = [args.spike_format]  # Use the specified format from command-line
+                        spike_formats = [
+                            args.spike_format
+                        ]  # Use specified format
 
                         if args.spike_format == "raster":
                             show_spikes(activity, parameters)
@@ -648,7 +618,8 @@ def main():
                         elif args.spike_format == "heatmap":
                             show_neuron_heatmap(activity, parameters)
 
-                        ll = loglikelihood(activity, images, weights, parameters)
+                        ll = loglikelihood(activity, images, weights,
+                                           parameters)
                         lp = logprior(cp, images.shape[1])
                         pos = posterior(ll, lp)
                         cm, ind = confusion(pos)
@@ -670,4 +641,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-                    
