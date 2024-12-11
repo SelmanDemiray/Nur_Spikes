@@ -59,7 +59,7 @@ def show_cm(cm, vis='on'):
     Args:
         cm (np.ndarray): A 2D array representing the confusion matrix.
         vis (str, optional): Whether to display the plot ('on') or 
-                              not ('off'). Defaults to 'on'.
+                            not ('off'). Defaults to 'on'.
     """
     if not (isinstance(cm, np.ndarray) and cm.shape[0] == cm.shape[1]):
         logging.warning("Invalid confusion matrix provided. Skipping visualization.")
@@ -85,12 +85,12 @@ def show_images(images, category=None, num_cols=10):
 
     Args:
         images (np.ndarray): A 2D array of images, where each column 
-                              represents an image.
+                            represents an image.
         category (int, optional): If provided, displays images only 
-                                    from the specified category. 
-                                    Defaults to None.
+                                from the specified category. 
+                                Defaults to None.
         num_cols (int, optional): The number of columns in the image 
-                                    grid. Defaults to 10.
+                                grid. Defaults to 10.
     """
     if not isinstance(images, np.ndarray):
         logging.warning("Invalid image data provided. Skipping visualization.")
@@ -132,7 +132,7 @@ def show_weights(weights, num_cols=25):
     Args:
         weights (np.ndarray): A 2D array of synaptic weights.
         num_cols (int, optional): The number of columns in the grid of 
-                                     receptive fields. Defaults to 25.
+                                receptive fields. Defaults to 25.
     """
     if not isinstance(weights, np.ndarray):
         logging.warning("Invalid weight data provided. Skipping visualization.")
@@ -249,8 +249,8 @@ def run_experiment(images, labels, parameters, spike_formats, weights):
         labels (np.ndarray): A 1D array of labels.
         parameters (dict): A dictionary of parameters.
         spike_formats (list): A list of formats for visualizing spike 
-                              activity ('raster', 'histogram', 'rate', 
-                              'heatmap').
+                            activity ('raster', 'histogram', 'rate', 
+                            'heatmap').
         weights (np.ndarray): Pre-loaded weight matrix.
     """
     cp = calculate_category_priors(labels)
@@ -298,7 +298,7 @@ def record_live(weights, parameters, input_queue, output_queue):
     Args:
         weights (np.ndarray): A 2D array of synaptic weights.
         parameters (dict): A dictionary of parameters containing 
-                            'dt' and 'gain'.
+                        'dt' and 'gain'.
         input_queue (queue.Queue): A queue to receive input images.
         output_queue (queue.Queue): A queue to send spike data.
     """
@@ -325,7 +325,33 @@ def run_experiment_live(weights, parameters):
     root = tk.Tk()
     root.title("Live SNN Experiment")
 
-    # Figure for the plot
+    # --- Neuron Visualization Window ---
+    neuron_window = tk.Toplevel(root)
+    neuron_window.title("Neuron Activity")
+
+    neuron_canvas = tk.Canvas(neuron_window, width=500, height=500)  # Adjust size as needed
+    neuron_canvas.pack()
+
+    num_neurons = weights.shape[0]
+    grid_size = int(np.ceil(np.sqrt(num_neurons)))
+    neuron_rects = []
+    for i in range(num_neurons):
+        row = i // grid_size
+        col = i % grid_size
+        x1 = col * 50  # Adjust spacing as needed
+        y1 = row * 50
+        x2 = x1 + 40
+        y2 = y1 + 40
+        rect = neuron_canvas.create_rectangle(x1, y1, x2, y2, fill="blue")
+        neuron_rects.append(rect)
+
+    # --- Spike Information Labels ---
+    spike_count_label = tk.Label(root, text="Spike Count: 0")
+    spike_count_label.pack()
+    spike_rate_label = tk.Label(root, text="Spike Rate: 0")
+    spike_rate_label.pack()
+
+    # Figure for the raster plot
     fig, ax = plt.subplots()
     line, = ax.plot([], [], '|k')  # For raster plot
     ax.set_xlabel('Time (s)')
@@ -378,13 +404,28 @@ def run_experiment_live(weights, parameters):
         try:
             if not output_queue.empty():
                 activity, timestamp = output_queue.get()
+                elapsed_time = timestamp - start_time
+
+                # Update spike count
+                total_spikes = np.sum(activity)  
+                spike_count_label.config(text=f"Spike Count: {total_spikes}")
+
+                # Update spike rate
+                spike_rate = total_spikes / elapsed_time 
+                spike_rate_label.config(text=f"Spike Rate: {spike_rate:.2f}")
+
+                # Update neuron visualization 
+                for neuron_idx in range(activity.shape[0]):
+                    if np.any(activity[neuron_idx, :] == 1):  # Check if neuron fired
+                        neuron_canvas.itemconfig(neuron_rects[neuron_idx], fill="red") 
+                    else:
+                        neuron_canvas.itemconfig(neuron_rects[neuron_idx], fill="blue")
 
                 # Update the raster plot
-                elapsed_time = timestamp - start_time
                 for neuron_idx in range(activity.shape[0]):
                     spike_times = np.where(activity[neuron_idx, :] == 1)[0] * parameters['dt']
                     ax.plot(spike_times + elapsed_time,
-                              np.ones_like(spike_times) * neuron_idx, '|k')
+                            np.ones_like(spike_times) * neuron_idx, '|k')
 
                 ax.relim()
                 ax.autoscale_view(True, True, True)
@@ -459,7 +500,7 @@ def run_experiment_activate(weights, parameters):
                 for neuron_idx in range(activity.shape[0]):
                     spike_times = np.where(activity[neuron_idx, :] == 1)[0] * parameters['dt']
                     ax.plot(spike_times + elapsed_time,
-                              np.ones_like(spike_times) * neuron_idx, '|k')
+                            np.ones_like(spike_times) * neuron_idx, '|k')
 
                 ax.relim()
                 ax.autoscale_view(True, True, True)
@@ -629,3 +670,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+                    
