@@ -1,4 +1,3 @@
-```markdown
 ## Neural Decoding Experiment Script
 
 This script simulates neural decoding experiments using different image datasets and parameters. It provides a flexible framework for exploring how populations of neurons represent and decode visual information.
