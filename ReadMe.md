@@ -89,8 +89,9 @@ This raster plot serves as a visual representation of the spiking activity exhib
 *   **Brain-Computer Interfaces:** Live decoding holds tremendous promise for developing brain-computer interfaces (BCIs), which aim to establish a direct communication pathway between the brain and external devices, such as computers or prosthetic limbs. By decoding neural activity in real-time, BCIs can translate thoughts and intentions into actions, enabling individuals to control devices with their minds. This technology has the potential to revolutionize assistive technology and restore lost function to individuals with paralysis or other disabilities.
 
 *   **Advancements in Neuroscience:** Live decoding experiments contribute significantly to our understanding of how the brain represents and processes information. By analyzing neural activity in real-time, researchers can gain invaluable insights into the neural code and the mechanisms underlying various cognitive functions, such as perception, attention, decision-making, and learning. This knowledge can lead to breakthroughs in treating neurological disorders and developing novel therapies for brain injury and disease.
-  [⬆️ Back to Top](#live-decoding-with-different-inputs) 
-
+  <div style="text-align: center;">
+    <a href="#live-decoding-in-action">⬆️ Back to Top</a>
+  </div> 
 </details>
 
 
