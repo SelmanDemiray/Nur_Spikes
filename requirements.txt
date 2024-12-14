@@ -1,0 +1,7 @@
+numpy
+scipy
+matplotlib
+Pillow
+requests
+scipy
+cupy-cuda11x
