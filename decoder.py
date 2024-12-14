@@ -1,4 +1,3 @@
-# decoder.py
 import numpy as np
 from scipy.stats import poisson
 from scipy.special import logsumexp
@@ -28,9 +27,9 @@ except ImportError:
     USE_CUPY = False
 
 from utils.helper_functions import (confusion, loglikelihood, linrectify,
-                                   logprior, posaverage, posterior, rates,
-                                   record, download_extract_mnist, spikes,
-                                   load_mnist_images, load_cifar10_images)
+                                     logprior, posaverage, posterior, rates,
+                                     record, download_extract_mnist, spikes,
+                                     load_mnist_images, load_cifar10_images)
 
 # Configure logging
 logging.basicConfig(filename='snn_experiment.log', level=logging.INFO,
@@ -48,8 +47,8 @@ def load_weights(file_path):
         logging.error(f"Error loading weights: {e}")
         raise
 
-# Load the weights
-weights = load_weights(r'D:\SNN\dev_main\Nur_Spikes\weights.mat')
+# Load the weights - Assuming weights.mat is in the same directory
+weights = load_weights('weights.mat') 
 
 def show_cm(cm, vis='on'):
     """Plots a confusion matrix."""
@@ -101,7 +100,7 @@ def show_images(images, category=None, num_cols=10):
         plt.subplot(num_rows, num_cols, i + 1)
         plt.imshow(
             images[:, i].reshape(int(np.sqrt(images.shape[0])),
-                                 int(np.sqrt(images.shape[0]))).T)
+                                    int(np.sqrt(images.shape[0]))).T)
         plt.axis('equal')
         plt.axis('off')
 
@@ -127,7 +126,7 @@ def show_weights(weights, num_cols=25):
         plt.subplot(num_rows, num_cols, i + 1)
         plt.imshow(
             weights[i, :].reshape(int(np.sqrt(weights.shape[1])),
-                                  int(np.sqrt(weights.shape[1]))).T)
+                                     int(np.sqrt(weights.shape[1]))).T)
         plt.axis('equal')
         plt.axis('off')
 
@@ -237,7 +236,10 @@ def run_experiment(images, labels, parameters, spike_formats, weights):
     cm, ind = confusion(pos)
     pa = posaverage(images, pos, 10)
 
+    # Ensure the 'figures' directory exists
+    os.makedirs("figures", exist_ok=True)
     filename = f"figures/case_dt{parameters['dt']:.3f}_gain{parameters['gain']:.1f}_nreps{parameters['nrep']}"
+    
     show_cm(cm, vis='off')
     try:
         plt.savefig(f"{filename}.png", dpi=300)
@@ -262,10 +264,6 @@ def record_live(weights, parameters, input_queue, output_queue):
             output_queue.put((activity, time.time()))
     except Exception as e:
         logging.error(f"Error in record_live thread: {e}")
-
-
-
-
 
 def run_experiment_live(weights, parameters, record_live):  # Added record_live as argument
     """Runs a live decoding experiment with a GUI."""
@@ -346,8 +344,8 @@ def run_experiment_live(weights, parameters, record_live):  # Added record_live 
     upload_button.pack()
 
     record_thread = threading.Thread(target=record_live,  # Use the passed record_live function
-                                     args=(weights, parameters,
-                                           input_queue, output_queue))
+                                        args=(weights, parameters,
+                                              input_queue, output_queue))
     record_thread.daemon = True
     record_thread.start()
 
@@ -388,8 +386,8 @@ def run_experiment_live(weights, parameters, record_live):  # Added record_live 
                             spike_times
                     ) > 0:  # Only plot if there are spikes
                         ax.plot(spike_times + elapsed_time,
-                                np.ones_like(spike_times) * neuron_idx,
-                                '|k')
+                                 np.ones_like(spike_times) * neuron_idx,
+                                 '|k')
 
                 ax.relim()
                 ax.autoscale_view(True, True, True)
@@ -410,17 +408,14 @@ def run_experiment_live(weights, parameters, record_live):  # Added record_live 
     root.after(100, update_plot)
     root.mainloop()
 
-
-
-
 def run_experiment_activate(weights, parameters):
     """Activates the neural population with custom input."""
     input_queue = queue.Queue()
     output_queue = queue.Queue()
 
     record_thread = threading.Thread(target=record_live,
-                                     args=(weights, parameters, input_queue,
-                                           output_queue))
+                                        args=(weights, parameters, input_queue,
+                                              output_queue))
     record_thread.daemon = True
     record_thread.start()
 
@@ -464,8 +459,8 @@ def run_experiment_activate(weights, parameters):
                     spike_times = np.where(
                         activity[neuron_idx, :] == 1)[0] * parameters['dt']
                     ax.plot(spike_times + elapsed_time,
-                            np.ones_like(spike_times) * neuron_idx,
-                            '|k')
+                             np.ones_like(spike_times) * neuron_idx,
+                             '|k')
 
                 ax.relim()
                 ax.autoscale_view(True, True, True)
@@ -608,7 +603,7 @@ def main():
         if args.live:
             logging.info("Beginning live decoding experiment:")
             run_experiment_live(weights, parameters, record_live
-                               )  # Pass the record_live function
+                                )  # Pass the record_live function
             logging.info("Finished live decoding experiment.")
         elif args.activate:
             logging.info("Activating neural population with custom input:")
@@ -642,13 +637,16 @@ def main():
                             show_neuron_heatmap(activity, parameters)
 
                         ll = loglikelihood(activity, images, weights,
-                                          parameters)
+                                            parameters)
                         lp = logprior(cp, images.shape[1])
                         pos = posterior(ll, lp)
                         cm, ind = confusion(pos)
                         pa = posaverage(images, pos, 10)
 
+                        # Ensure the 'figures' directory exists
+                        os.makedirs("figures", exist_ok=True)
                         filename = f"figures/case_dt{dt:.3f}_gain{gain:.1f}_nreps{nrep}"
+                        
                         show_cm(cm, vis='off')
                         try:
                             plt.savefig(f"{filename}.png", dpi=300)
