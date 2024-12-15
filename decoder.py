@@ -18,6 +18,7 @@ import tkinter as tk
 from tkinter import filedialog
 import scipy.io as sio
 import logging
+from scipy.stats import skew, kurtosis  # Import for weight analysis
 
 # Try importing CuPy
 try:
@@ -27,9 +28,9 @@ except ImportError:
     USE_CUPY = False
 
 from utils.helper_functions import (confusion, loglikelihood, linrectify,
-                                     logprior, posaverage, posterior, rates,
-                                     record, download_extract_mnist, spikes,
-                                     load_mnist_images, load_cifar10_images)
+                                    logprior, posaverage, posterior, rates,
+                                    record, download_extract_mnist, spikes,
+                                    load_mnist_images, load_cifar10_images)
 
 # Configure logging
 logging.basicConfig(filename='snn_experiment.log', level=logging.INFO,
@@ -37,6 +38,96 @@ logging.basicConfig(filename='snn_experiment.log', level=logging.INFO,
 
 # Log which library is being used
 logging.info(f"{'CuPy' if USE_CUPY else 'NumPy'} is being used.")
+
+
+def analyze_mat_weights(file_path):
+    """
+    Analyzes a .mat file containing weights from a MATLAB trained model, providing
+    an extensive amount of information about each weight variable.
+
+    Args:
+      file_path: Path to the .mat file.
+
+    Returns:
+      None. Prints detailed information about the weights.
+    """
+    try:
+        mat_data = sio.loadmat(file_path)
+    except FileNotFoundError:
+        print(f"Error: File not found at {file_path}")
+        return
+
+    print(f"Found {len(mat_data) - 1} weight variables in the file:")
+    for var_name in mat_data.keys():
+        if not var_name.startswith('__'):
+            weight_data = mat_data[var_name]
+
+            # If the variable is a dictionary (nested structure)
+            if isinstance(weight_data, dict):
+                print(f"  - {var_name}: (Nested structure)")
+                for key, value in weight_data.items():
+                    analyze_weight_data(key, value)
+            else:
+                analyze_weight_data(var_name, weight_data)
+
+
+def analyze_weight_data(var_name, weight_data):
+    """
+    Analyzes a single weight variable.
+
+    Args:
+      var_name: Name of the weight variable.
+      weight_data: Numpy array containing the weight data.
+
+    Returns:
+      None. Prints detailed information about the weight data.
+    """
+    # Basic information
+    print(f"    - {var_name}:")
+    print(f"        - Shape: {weight_data.shape}")
+    print(f"        - Size: {weight_data.size} elements")
+    print(f"        - Data type: {weight_data.dtype}")
+
+    # Statistical properties
+    print(f"        - Mean: {np.mean(weight_data):.4f}")
+    print(f"        - Standard deviation: {np.std(weight_data):.4f}")
+    print(f"        - Minimum: {np.min(weight_data):.4f}")
+    print(f"        - Maximum: {np.max(weight_data):.4f}")
+    percentiles = np.percentile(weight_data,
+                               [0, 1, 5, 25, 50, 75, 95, 99, 100])
+    print(
+        f"        - Percentiles (0th, 1st, 5th, 25th, 50th, 75th, 95th, 99th, 100th): {percentiles}"
+    )
+    print(f"        - Skewness: {skew(weight_data.flatten()):.4f}")
+    print(f"        - Kurtosis: {kurtosis(weight_data.flatten()):.4f}")
+
+    # Sparsity
+    if np.issubdtype(weight_data.dtype, np.integer) or np.issubdtype(
+            weight_data.dtype, np.floating):
+        zero_count = np.count_nonzero(weight_data == 0)
+        sparsity = zero_count / weight_data.size
+        print(f"        - Sparsity: {sparsity:.2%}")
+
+    # Histogram
+    plt.hist(weight_data.flatten(), bins=50)
+    plt.title(f"Histogram of weights for {var_name}")
+    plt.xlabel("Weight Value")
+    plt.ylabel("Frequency")
+    plt.show()
+
+    # Weight distribution for each neuron/filter (for 2D weight data)
+    if len(weight_data.shape) == 2:
+        plt.figure(figsize=(10, 5))
+        for i in range(
+                min(weight_data.shape[0],
+                    50)):  # Limit to 50 neurons for visualization
+            plt.plot(weight_data[i, :], label=f"Neuron {i+1}")
+        plt.title(f"Weight Distribution for Each Neuron ({var_name})")
+        plt.xlabel("Input Feature")
+        plt.ylabel("Weight Value")
+        plt.legend(loc='upper right', ncol=2, fontsize='small')
+        plt.show()
+
 
 def load_weights(file_path):
     """Loads weights from a .mat file."""
@@ -47,8 +138,10 @@ def load_weights(file_path):
         logging.error(f"Error loading weights: {e}")
         raise
 
+
 # Load the weights - Assuming weights.mat is in the same directory
-weights = load_weights('weights.mat') 
+weights = load_weights('weights.mat')
+
 
 def show_cm(cm, vis='on'):
     """Plots a confusion matrix."""
@@ -71,11 +164,11 @@ def show_cm(cm, vis='on'):
     if vis == 'on':
         plt.show()
 
+
 def show_images(images, category=None, num_cols=10):
     """Displays images from a dataset."""
     if not isinstance(images, np.ndarray):
-        logging.warning(
-            "Invalid image data provided. Skipping visualization.")
+        logging.warning("Invalid image data provided. Skipping visualization.")
         return
 
     if category is not None:
@@ -100,7 +193,7 @@ def show_images(images, category=None, num_cols=10):
         plt.subplot(num_rows, num_cols, i + 1)
         plt.imshow(
             images[:, i].reshape(int(np.sqrt(images.shape[0])),
-                                    int(np.sqrt(images.shape[0]))).T)
+                                 int(np.sqrt(images.shape[0]))).T)
         plt.axis('equal')
         plt.axis('off')
 
@@ -109,6 +202,7 @@ def show_images(images, category=None, num_cols=10):
     else:
         plt.suptitle("All images")
     plt.show()
+
 
 def show_weights(weights, num_cols=25):
     """Displays all the receptive field structures as gray images."""
@@ -126,12 +220,13 @@ def show_weights(weights, num_cols=25):
         plt.subplot(num_rows, num_cols, i + 1)
         plt.imshow(
             weights[i, :].reshape(int(np.sqrt(weights.shape[1])),
-                                     int(np.sqrt(weights.shape[1]))).T)
+                                  int(np.sqrt(weights.shape[1]))).T)
         plt.axis('equal')
         plt.axis('off')
 
     plt.suptitle("Receptive fields")
     plt.show()
+
 
 def show_spikes(activity, parameters):
     """Displays a raster plot of spike activity."""
@@ -151,6 +246,7 @@ def show_spikes(activity, parameters):
     plt.title('Spike Raster Plot')
     plt.show()
 
+
 def show_spike_histogram(activity, parameters):
     """Displays a histogram of spike counts across neurons."""
     plt.figure()
@@ -161,6 +257,7 @@ def show_spike_histogram(activity, parameters):
     plt.ylabel('Number of Neurons')
     plt.title('Spike Count Histogram')
     plt.show()
+
 
 def show_spike_rate_plot(activity, parameters):
     """Displays a plot of spike rates over time, averaged across neurons."""
@@ -173,6 +270,7 @@ def show_spike_rate_plot(activity, parameters):
     plt.ylabel('Average Spike Rate')
     plt.title('Average Spike Rate Over Time')
     plt.show()
+
 
 def show_neuron_heatmap(activity, parameters):
     """Displays a heatmap of spike activity for each neuron."""
@@ -187,6 +285,7 @@ def show_neuron_heatmap(activity, parameters):
     plt.colorbar()
     plt.show()
 
+
 def load_images(image_paths):
     """Loads images from a list of file paths."""
     try:
@@ -199,6 +298,7 @@ def load_images(image_paths):
         logging.warning(f"Error loading images: {e}")
         return np.array([])  # Return an empty array
 
+
 def calculate_category_priors(labels):
     """Calculates category priors based on label frequencies."""
     if not isinstance(labels, np.ndarray):
@@ -207,9 +307,9 @@ def calculate_category_priors(labels):
 
     label_counts = Counter(labels)
     num_images = len(labels)
-    return np.array([
-        label_counts[i] / num_images for i in range(len(label_counts))
-    ])
+    return np.array(
+        [label_counts[i] / num_images for i in range(len(label_counts))])
+
 
 def run_experiment(images, labels, parameters, spike_formats, weights):
     """Runs a single decoding experiment."""
@@ -239,7 +339,7 @@ def run_experiment(images, labels, parameters, spike_formats, weights):
     # Ensure the 'figures' directory exists
     os.makedirs("figures", exist_ok=True)
     filename = f"figures/case_dt{parameters['dt']:.3f}_gain{parameters['gain']:.1f}_nreps{parameters['nrep']}"
-    
+
     show_cm(cm, vis='off')
     try:
         plt.savefig(f"{filename}.png", dpi=300)
@@ -251,6 +351,7 @@ def run_experiment(images, labels, parameters, spike_formats, weights):
     show_images(pa)
 
     logging.info("Finished decoding experiment.")
+
 
 def record_live(weights, parameters, input_queue, output_queue):
     """Continuously generates spikes for live decoding."""
@@ -265,7 +366,9 @@ def record_live(weights, parameters, input_queue, output_queue):
     except Exception as e:
         logging.error(f"Error in record_live thread: {e}")
 
-def run_experiment_live(weights, parameters, record_live):  # Added record_live as argument
+
+def run_experiment_live(weights, parameters,
+                        record_live):  # Added record_live as argument
     """Runs a live decoding experiment with a GUI."""
     input_queue = queue.Queue()
     output_queue = queue.Queue()
@@ -274,7 +377,8 @@ def run_experiment_live(weights, parameters, record_live):  # Added record_live 
     root.title("Live SNN Experiment")
 
     # Add a label to display the used library
-    library_label = tk.Label(root, text=f"Using {'CuPy' if USE_CUPY else 'NumPy'}")
+    library_label = tk.Label(root,
+                             text=f"Using {'CuPy' if USE_CUPY else 'NumPy'}")
     library_label.pack()
 
     neuron_window = tk.Toplevel(root)
@@ -344,8 +448,8 @@ def run_experiment_live(weights, parameters, record_live):  # Added record_live 
     upload_button.pack()
 
     record_thread = threading.Thread(target=record_live,  # Use the passed record_live function
-                                        args=(weights, parameters,
-                                              input_queue, output_queue))
+                                     args=(weights, parameters, input_queue,
+                                           output_queue))
     record_thread.daemon = True
     record_thread.start()
 
@@ -375,19 +479,19 @@ def run_experiment_live(weights, parameters, record_live):  # Added record_live 
                 for neuron_idx, rect in enumerate(neuron_rects):
                     neuron_canvas.itemconfig(
                         rect,
-                        fill="red" if np.any(
-                            activity[neuron_idx, :] == 1) else "blue")
+                        fill="red" if np.any(activity[neuron_idx, :] == 1
+                                             ) else "blue")
 
                 # Plot spikes
                 for neuron_idx in range(activity.shape[0]):
-                    spike_times = np.where(
-                        activity[neuron_idx, :] == 1)[0] * parameters['dt']
+                    spike_times = np.where(activity[neuron_idx, :] ==
+                                           1)[0] * parameters['dt']
                     if len(
                             spike_times
                     ) > 0:  # Only plot if there are spikes
                         ax.plot(spike_times + elapsed_time,
-                                 np.ones_like(spike_times) * neuron_idx,
-                                 '|k')
+                                np.ones_like(spike_times) * neuron_idx,
+                                '|k')
 
                 ax.relim()
                 ax.autoscale_view(True, True, True)
@@ -408,21 +512,21 @@ def run_experiment_live(weights, parameters, record_live):  # Added record_live 
     root.after(100, update_plot)
     root.mainloop()
 
+
 def run_experiment_activate(weights, parameters):
     """Activates the neural population with custom input."""
     input_queue = queue.Queue()
     output_queue = queue.Queue()
 
     record_thread = threading.Thread(target=record_live,
-                                        args=(weights, parameters, input_queue,
-                                              output_queue))
+                                     args=(weights, parameters, input_queue,
+                                           output_queue))
     record_thread.daemon = True
     record_thread.start()
 
     plt.ion()
     fig, ax = plt.subplots()
     line, = ax.plot([], [], '|k')
-    # decoder.py (continued)
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Neuron Index')
     ax.set_title('Neural Population Activity')
@@ -456,11 +560,11 @@ def run_experiment_activate(weights, parameters):
                 elapsed_time = timestamp - start_time
 
                 for neuron_idx in range(activity.shape[0]):
-                    spike_times = np.where(
-                        activity[neuron_idx, :] == 1)[0] * parameters['dt']
+                    spike_times = np.where(activity[neuron_idx, :] ==
+                                           1)[0] * parameters['dt']
                     ax.plot(spike_times + elapsed_time,
-                             np.ones_like(spike_times) * neuron_idx,
-                             '|k')
+                            np.ones_like(spike_times) * neuron_idx,
+                            '|k')
 
                 ax.relim()
                 ax.autoscale_view(True, True, True)
@@ -475,6 +579,7 @@ def run_experiment_activate(weights, parameters):
         record_thread.join()
         plt.ioff()
         plt.show()
+
 
 def cli_interaction(weights):
     """Provides a command-line interface for user interaction."""
@@ -543,7 +648,12 @@ def cli_interaction(weights):
 
     run_experiment(images, labels, parameters, spike_formats, weights)
 
+
 def main():
+    # Analyze the weights before running the experiment
+    mat_file_path = "weights.mat"  # Or get the path from user input
+    analyze_mat_weights(mat_file_path)
+
     parser = argparse.ArgumentParser(
         description="Run neural decoding experiments.")
     parser.add_argument("--dataset",
@@ -602,8 +712,9 @@ def main():
 
         if args.live:
             logging.info("Beginning live decoding experiment:")
-            run_experiment_live(weights, parameters, record_live
-                                )  # Pass the record_live function
+            run_experiment_live(
+                weights, parameters, record_live
+            )  # Pass the record_live function
             logging.info("Finished live decoding experiment.")
         elif args.activate:
             logging.info("Activating neural population with custom input:")
@@ -637,7 +748,7 @@ def main():
                             show_neuron_heatmap(activity, parameters)
 
                         ll = loglikelihood(activity, images, weights,
-                                            parameters)
+                                          parameters)
                         lp = logprior(cp, images.shape[1])
                         pos = posterior(ll, lp)
                         cm, ind = confusion(pos)
@@ -646,7 +757,7 @@ def main():
                         # Ensure the 'figures' directory exists
                         os.makedirs("figures", exist_ok=True)
                         filename = f"figures/case_dt{dt:.3f}_gain{gain:.1f}_nreps{nrep}"
-                        
+
                         show_cm(cm, vis='off')
                         try:
                             plt.savefig(f"{filename}.png", dpi=300)
@@ -658,6 +769,7 @@ def main():
                         show_images(pa)
 
             logging.info("Finished decoding experiments.")
+
 
 if __name__ == "__main__":
     main()
