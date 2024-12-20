@@ -404,15 +404,19 @@ def record_live(W0, W1, parameters, input_queue, output_queue, param_queue):
             # Calculate activities for both layers
             R1, R2 = rates(images, W0, W1, parameters)
             print(f"Shape of R1: {R1.shape}")
+            print(f"R1 values (first 5): {R1[:5, 0]}") # Print first 5 values
             print(f"Shape of R2: {R2.shape}")
+            print(f"R2 values (first 5): {R2[:5, 0]}")
 
             R2_positive = np.maximum(R2, 0)
             print(f"Shape of R2_positive: {R2_positive.shape}")
+            print(f"R2_positive values (first 5): {R2_positive[:5, 0]}")
 
             # Ensure that mu has the correct shape for broadcasting
             mu = parameters["dt"] * parameters["gain"] * R2_positive
             mu = np.tile(mu, (1, parameters["nrep"]))
             print(f"Shape of mu: {mu.shape}")
+            print(f"mu values (first 5): {mu[:5, 0]}")
 
             # Check if mu is all zeros or very close to zero
             if np.allclose(mu, 0):
@@ -422,6 +426,7 @@ def record_live(W0, W1, parameters, input_queue, output_queue, param_queue):
                 mu=mu, size=(R2_positive.shape[0], parameters["nrep"])
             )  # Generate spikes
             print(f"Shape of S: {S.shape}")
+            print(f"S values (first 5): {S[:5, 0]}")
 
             # Put activities, spikes, and timestamp into the queue
             output_queue.put((S, R1, R2_positive, time.time()))
@@ -560,11 +565,22 @@ def run_experiment_live(default_W0, default_W1, parameters, record_live):
         image_loaded = False
         image_label.config(text="Using Random Noise Input")
 
+    # Add this function to restore the static image
+    def add_static_image():
+        nonlocal static_input, image_loaded
+        static_input = np.random.poisson(lam=2, size=(784, 1))
+        image_loaded = False  # Keep it as noise input, but use the static_input
+        image_label.config(text="Using Static Random Image")
+
     upload_button = tk.Button(root, text="Upload Image", command=upload_image)
     upload_button.pack()
 
     remove_button = tk.Button(root, text="Remove Image", command=remove_image)
     remove_button.pack()
+
+    # Add the button to restore the static image
+    add_static_button = tk.Button(root, text="Add Static Image", command=add_static_image)
+    add_static_button.pack()
 
     # Create sliders for dt and gain
     dt_label = ttk.Label(root, text="Time Step (dt):")
@@ -721,60 +737,59 @@ def run_experiment_live(default_W0, default_W1, parameters, record_live):
                         color_value = int(R1_normalized[neuron_idx, 0] * 255)
                         hex_color = "#{:02x}{:02x}{:02x}".format(color_value, 0, 255 - color_value)
                         neuron_canvas_1.itemconfig(rect, fill=hex_color)
-                
+
                 # Update neuron colors in both canvases (Layer 2)
                 for neuron_idx, rect in enumerate(neuron_rects_2):
                     if neuron_idx < activity.shape[0]:  # Use activity.shape[0] for layer 2
-                        spike_sum = np.sum(activity[neuron_idx, :])
+                        spike_sum = np.sum(activity[neuron_idx, :])  # Check spikes in current time step
                         neuron_canvas_2.itemconfig(
                             rect,
                             fill="red" if spike_sum > 0 else "blue",
                         )
 
-                # Plot spikes for both layers
-                if spikes_this_frame > last_spike_count:
-                    ax1.clear()
-                    ax2.clear()
+                # Update raster plots for both layers
+                ax1.clear()
+                ax2.clear()
 
-                    for neuron_idx in range(R1.shape[0]):
-                        spike_times_1 = (
-                            np.where(R1[neuron_idx, :] > 0)[0]
-                            * parameters["dt"]
+                # Layer 1 (R1)
+                for neuron_idx in range(R1.shape[0]):
+                    spike_times_1 = np.where(R1[neuron_idx, :] > 0)[0] * parameters["dt"]
+                    if len(spike_times_1) > 0:
+                        ax1.plot(
+                            spike_times_1 + elapsed_time,
+                            np.ones_like(spike_times_1) * neuron_idx,
+                            "|k",
+                            markersize=3,
                         )
-                        if len(spike_times_1) > 0:
-                            ax1.plot(
-                                spike_times_1 + elapsed_time,
-                                np.ones_like(spike_times_1) * neuron_idx,
-                                "|k",
-                            )
 
-                    for neuron_idx in range(activity.shape[0]):
-                        spike_times_2 = (
-                            np.where(activity[neuron_idx, :] == 1)[0] # Updated spike times calculation
-                            * parameters["dt"]
+                # Layer 2 (activity)
+                for neuron_idx in range(activity.shape[0]):
+                    spike_times_2 = np.where(activity[neuron_idx, :] == 1)[0] * parameters["dt"]
+                    if len(spike_times_2) > 0:
+                        ax2.plot(
+                            spike_times_2 + elapsed_time,
+                            np.ones_like(spike_times_2) * neuron_idx,
+                            "|k",
+                            markersize=3,
                         )
-                        if len(spike_times_2) > 0:
-                            ax2.plot(
-                                spike_times_2 + elapsed_time,
-                                np.ones_like(spike_times_2) * neuron_idx,
-                                "|k",
-                            )
 
-                    ax1.set_xlabel("Time (s)")
-                    ax1.set_ylabel("Neuron Index")
-                    ax2.set_xlabel("Time (s)")
-                    ax2.set_ylabel("Neuron Index")
+                ax1.set_xlabel("Time (s)")
+                ax1.set_ylabel("Neuron Index")
+                ax1.set_title("Live Spike Raster Plot - Layer 1")
+                ax2.set_xlabel("Time (s)")
+                ax2.set_ylabel("Neuron Index")
+                ax2.set_title("Live Spike Raster Plot - Layer 2")
 
-                    raster_plot1.draw()
-                    raster_plot2.draw()
-                    last_spike_count = spikes_this_frame
+                raster_plot1.draw()
+                raster_plot2.draw()
+                last_spike_count = spikes_this_frame
 
                 # Provide input to the record_live thread based on image_loaded flag
                 if image_loaded:
                     input_queue.put(static_input)  # Use the loaded image
                 else:
                     # Use Poisson noise
-                    input_queue.put(np.random.poisson(lam=0.5, size=(784, 1)))
+                    input_queue.put(np.random.poisson(lam=2, size=(784, 1)))
 
         except KeyboardInterrupt:
             logging.info("Stopping experiment...")
@@ -784,7 +799,7 @@ def run_experiment_live(default_W0, default_W1, parameters, record_live):
             return
 
         finally:
-            root.after(100, update_plot)  # Reschedule update
+            root.after(100, update_plot)
 
     root.after(100, update_plot)
     root.mainloop()
