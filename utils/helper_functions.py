@@ -1,13 +1,16 @@
 # helper_functions.py
-import numpy as np
-from scipy.stats import poisson
-from scipy.special import logsumexp
-import matplotlib.pyplot as plt
-from PIL import Image
-import requests
-import os
+
 import gzip
+import os
 import shutil
+
+import matplotlib.pyplot as plt
+import numpy as np
+import requests
+from PIL import Image
+from scipy.special import logsumexp
+from scipy.stats import poisson
+import logging
 
 
 def linrectify(X):
@@ -15,20 +18,17 @@ def linrectify(X):
     return np.maximum(X, 0)
 
 
-def spikes(images, weights, parameters):
+def spikes(R2, parameters):  # Updated arguments
     """Generates spikes for the population of neurons."""
-    assert isinstance(images, np.ndarray), "Invalid 'images' array"
-    assert isinstance(weights, np.ndarray), "Invalid 'weights' array"
+    assert isinstance(R2, np.ndarray), "Invalid 'R2' array"
     assert 'dt' in parameters and parameters[
         'dt'] > 0, "Invalid 'dt' parameter"
-    assert 'gain' in parameters and parameters[
-        'gain'] > 0, "Invalid 'gain' parameter"
 
-    R = rates(images, weights, parameters)
+    # Ensure R2 is non-negative
+    R2_positive = np.maximum(R2, 0)
 
-    # Use a smaller size for the random values
-    S = poisson.rvs(mu=parameters['dt'] * R,
-                    size=R.shape)  
+    # Use R2 (second layer rates) to generate spikes
+    S = poisson.rvs(mu=parameters['dt'] * parameters['gain'] * R2_positive, size=R2_positive.shape)
     return S
 
 
@@ -44,14 +44,18 @@ def confusion(pos):
     mapcat = mapind // 100
     for c in range(num_categories):
         cm[c, :] = np.bincount(mapcat[c * 100:(c + 1) * 100],
-                                minlength=num_categories)
+                               minlength=num_categories)
     ind = mapind
 
     cm = cm / cm.sum(axis=1, keepdims=True)
     return cm, ind
 
 
-def loglikelihood(activity, image_embeddings, weights, parameters):
+def loglikelihood(activity,
+                  image_embeddings,
+                  W0,
+                  W1,
+                  parameters):  # Updated arguments
     """Calculates the log likelihood of the activity."""
     assert 'dt' in parameters and parameters[
         'dt'] > 0, "Invalid 'dt' parameter"
@@ -63,14 +67,19 @@ def loglikelihood(activity, image_embeddings, weights, parameters):
     assert isinstance(activity, np.ndarray), "Invalid 'activity' array"
     assert isinstance(image_embeddings,
                       np.ndarray), "Invalid 'image_embeddings' array"
-    assert isinstance(weights, np.ndarray), "Invalid 'weights' array"
+    assert isinstance(W0, np.ndarray), "Invalid 'W0' array"
+    assert isinstance(W1, np.ndarray), "Invalid 'W1' array"
 
     meanact = np.ceil(np.mean(activity, axis=2)).astype(int)
-    LL = np.zeros((image_embeddings.shape[1], image_embeddings.shape[1]))
-    R = rates(image_embeddings, weights, parameters) * parameters['dt']
+    LL = np.zeros(
+        (image_embeddings.shape[1], image_embeddings.shape[1]))
 
-    A = np.tile(meanact[:, :, np.newaxis], (1, 1, image_embeddings.shape[1]))
-    PA = poisson.pmf(A, R[:, :, np.newaxis])
+    R1, R2 = rates(image_embeddings, W0, W1, parameters)  # Get R1 and R2
+    R = parameters["gain"] * R2 * parameters['dt']  # Use R2 for the calculation
+
+    A = np.tile(meanact[:, :, np.newaxis],
+                (1, 1, image_embeddings.shape[1]))
+    PA = poisson.pmf(A, R[:, :, np.newaxis])  # Use R here
     LPA = np.log(PA + 1e-10)
     LL = np.sum(LPA, axis=0)
 
@@ -122,24 +131,32 @@ def posterior(LL, LP):
     return POS
 
 
-def rates(images, weights, parameters):
+def rates(images, W0, W1, parameters):  # Updated arguments
     """Calculates the firing rates of the neurons."""
     assert isinstance(images, np.ndarray), "Invalid 'images' array"
-    assert isinstance(weights, np.ndarray), "Invalid 'weights' array"
+    assert isinstance(W0, np.ndarray), "Invalid 'W0' array"
+    assert isinstance(W1, np.ndarray), "Invalid 'W1' array"
     assert 'dt' in parameters and parameters[
         'dt'] > 0, "Invalid 'dt' parameter"
     assert 'gain' in parameters and parameters[
         'gain'] > 0, "Invalid 'gain' parameter"
 
-    R = weights @ images
-    R = linrectify(R) * parameters['gain']
-    return R
+    R1 = W0 @ images  # Activity of the first layer
+    R1 = linrectify(R1) * parameters['gain']
+    R2 = W1 @ R1  # Activity of the second layer
+    R2 = linrectify(R2) * parameters['gain']
+
+    logging.debug(f"rates: Calculated R1 with shape {R1.shape} and values: {R1}")  # Log R1 values
+    logging.debug(f"rates: Calculated R2 with shape {R2.shape} and values: {R2}")  # Log R2 values
+
+    return R1, R2  # Return both R1 and R2
 
 
-def record(images, weights, parameters):
+def record(images, W0, W1, parameters):  # Updated arguments
     """Simulates an experimental recording session."""
     assert isinstance(images, np.ndarray), "Invalid 'images' array"
-    assert isinstance(weights, np.ndarray), "Invalid 'weights' array"
+    assert isinstance(W0, np.ndarray), "Invalid 'W0' array"
+    assert isinstance(W1, np.ndarray), "Invalid 'W1' array"
     assert 'dt' in parameters and parameters[
         'dt'] > 0, "Invalid 'dt' parameter"
     assert 'gain' in parameters and parameters[
@@ -147,11 +164,14 @@ def record(images, weights, parameters):
     assert 'nrep' in parameters and parameters[
         'nrep'] > 0, "Invalid 'nrep' parameter"
 
-    activity = np.zeros((weights.shape[0], images.shape[1],
-                        parameters['nrep']))
+    R1, R2 = rates(images, W0, W1, parameters)
+
+    activity = np.zeros(
+        (W1.shape[0], images.shape[1],
+         parameters['nrep']))  # Use output layer shape (W1)
 
     for n in range(parameters['nrep']):
-        activity[:, :, n] = spikes(images, weights, parameters)
+        activity[:, :, n] = spikes(R2, parameters)  # Updated call
 
     return activity
 
@@ -175,7 +195,7 @@ def load_mnist_images(data_dir, kind="train"):
         imgpath.read(16)
         images = np.frombuffer(imgpath.read(),
                                dtype=np.uint8).reshape(len(labels),
-                                                       784).T
+                                                      784).T
 
     return images, labels
 
@@ -213,17 +233,17 @@ def load_cifar10_images(data_dir):
     labels = []
     for i in range(1, 6):
         batch_file = os.path.join(data_dir, "cifar-10-batches-py",
-                                  f"data_batch_{i}")
+                                 f"data_batch_{i}")
         batch_data = unpickle(batch_file)
         images.append(batch_data[b'data'])
         labels.extend(batch_data[b'labels'])
 
-    images = np.concatenate(images).reshape(-1, 3, 32, 32).transpose(0, 2, 3, 1)
+    images = np.concatenate(images).reshape(-1, 3, 32, 32).transpose(
+        0, 2, 3, 1)
 
     # Convert to grayscale
     images = np.array([
-        np.array(Image.fromarray(img).convert('L')).flatten()
-        for img in images
+        np.array(Image.fromarray(img).convert('L')).flatten() for img in images
     ]).T
     labels = np.array(labels)
     return images, labels
@@ -235,6 +255,7 @@ def download_extract_mnist(data_dir):
         os.makedirs(data_dir)
 
     base_url = "http://yann.lecun.com/exdb/mnist/"
+    mirror_url = "https://github.com/zalandoresearch/fashion-mnist/raw/master/data/fashion/"
     files = [
         "train-images-idx3-ubyte.gz",
         "train-labels-idx1-ubyte.gz",
@@ -255,7 +276,6 @@ def download_extract_mnist(data_dir):
             except requests.exceptions.RequestException as e:
                 print(f"Error downloading {file}: {e}")
                 # Try a mirror if the main download fails
-                mirror_url = "https://github.com/zalandoresearch/fashion-mnist/raw/master/data/fashion/"
                 print(f"Trying to download from mirror: {mirror_url + file}")
                 try:
                     response = requests.get(mirror_url + file, stream=True)
