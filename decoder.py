@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from PIL import Image
+from PIL import Image, ImageTk  # Import ImageTk here
 from scipy.stats import poisson
 
 # Import from helper_functions
@@ -131,6 +131,27 @@ def run_experiment_live(parameters):
     raster_plot1 = FigureCanvasTkAgg(fig1, master=root)
     raster_plot1.get_tk_widget().grid(row=4, column=2, columnspan=2, padx=5, pady=5)
     ax1.set_title("Live Spike Raster Plot - Layer 1")
+
+    # --- Create input and weight visualization frames ---
+    input_frame = tk.Frame(root)
+    input_frame.grid(row=8, column=0, columnspan=2, pady=5)
+
+    weight_frame = tk.Frame(root)
+    weight_frame.grid(row=8, column=2, columnspan=2, pady=5)
+
+    # --- Create labels to display information about input and weight ---
+    input_label = tk.Label(input_frame, text="Current Input:")
+    input_label.pack()
+
+    weight_label = tk.Label(weight_frame, text="Current Weight (W0):")
+    weight_label.pack()
+
+    # --- Create canvases to display input image and weight matrix ---
+    input_canvas = tk.Canvas(input_frame, width=140, height=140) # Increased canvas size
+    input_canvas.pack()
+
+    weight_canvas = tk.Canvas(weight_frame, width=280, height=280)
+    weight_canvas.pack()
 
     # --- Button Functions ---
     def load_weights_button():
@@ -397,6 +418,41 @@ def run_experiment_live(parameters):
 
             raster_plot0.draw()
             raster_plot1.draw()
+
+            # Update input and weight visualizations
+            if image_loaded and static_input is not None:
+                # Reshape the input for display
+                if USE_CUPY:
+                  input_image = cp.asnumpy(static_input).reshape(28, 28) * 255
+                else:
+                    input_image = static_input.reshape(28, 28) * 255
+
+                # Convert to a PIL Image and resize for display
+                input_image = Image.fromarray(input_image.astype(np.uint8))
+                # Resize the image to fit the canvas (e.g., 5 times the original size)
+                resized_image = input_image.resize((140, 140), Image.NEAREST)
+                # Convert the resized image to a PhotoImage and display it on the canvas
+                input_photo = ImageTk.PhotoImage(resized_image)
+                input_canvas.create_image(0, 0, anchor=tk.NW, image=input_photo)
+                input_canvas.image = input_photo  # Keep a reference to avoid garbage collection
+
+
+            if weights_loaded and W0 is not None:
+                # Normalize the weights for visualization
+                if USE_CUPY:
+                  W0_normalized = cp.asnumpy(W0)
+                else:
+                  W0_normalized = W0
+                W0_normalized = (W0_normalized - np.min(W0_normalized)) / (np.max(W0_normalized) - np.min(W0_normalized))
+                W0_resized = np.kron(W0_normalized, np.ones((5, 5))) * 255
+
+                # Convert to a PIL Image
+                W0_image = Image.fromarray(W0_resized.astype(np.uint8))
+                W0_photo = ImageTk.PhotoImage(W0_image)
+
+                # Display on the canvas
+                weight_canvas.create_image(0, 0, anchor=tk.NW, image=W0_photo)
+                weight_canvas.image = W0_photo  # Keep a reference
 
             # Determine the next input based on button presses or default behavior
             if image_loaded:

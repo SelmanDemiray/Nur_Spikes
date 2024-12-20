@@ -1,0 +1,7 @@
+error codes are:
+
+SNN-001: Dimension mismatches
+SNN-002: Weight loading failures
+SNN-003: Image loading failures
+SNN-004: Computation errors
+SNN-005: Queue-related errors
