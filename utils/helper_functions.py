@@ -94,9 +94,9 @@ def load_weights(file_path):
 def load_image(file_path):
     """Loads an image, converts it to grayscale, resizes it, and returns it as a NumPy array."""
     try:
-        img = Image.open(file_path).convert("L")  # Convert to grayscale
-        img = img.resize((28, 28))  # Resize to 28x28
-        img_array = np.array(img).reshape(784, 1) / 255.0  # Normalize to 0-1
+        img = Image.open(file_path).convert("L") 
+        img = img.resize((28, 28))  
+        img_array = np.array(img).reshape(784, 1) / 255.0 
 
         # Verify shape
         if img_array.shape != (784, 1):
@@ -105,6 +105,19 @@ def load_image(file_path):
         return img_array
     except Exception as e:
         raise ImageLoadError(file_path, str(e))
+    
+def get_prediction(output_spikes):
+    # Count the number of spikes for each class
+    spike_counts = np.sum(output_spikes, axis=1)  # Sum along the time axis
+
+    # Find the class with the maximum spike count
+    predicted_class = np.argmax(spike_counts)
+
+    # Calculate confidence (percentage of spikes for the predicted class)
+    total_spikes = np.sum(spike_counts)
+    confidence = (spike_counts[predicted_class] / total_spikes) * 100 if total_spikes > 0 else 0
+
+    return predicted_class, confidence
 
 def rates(images, W0, W1, parameters):
     """Calculate rates for both layers with shape verification."""
@@ -135,8 +148,9 @@ def rates(images, W0, W1, parameters):
         R2 = np.maximum(0, W1 @ R1)
         return R1, R2
 
-def record_live(W0, W1, parameters, input_queue, output_queue, param_queue):
+def record_live(W0, W1, parameters, input_queue, output_queue, param_queue, prediction_history_queue):
     """Continuously generates spikes with comprehensive error handling."""
+    prediction_counts = {i: 0 for i in range(10)}  # Initialize counts for each class
     try:
         while True:
             # Get updated parameters
@@ -188,6 +202,13 @@ def record_live(W0, W1, parameters, input_queue, output_queue, param_queue):
             # Verify output dimensions
             verify_dimensions("S_1", S_1, (500, parameters["nrep"]))
             verify_dimensions("S_2", S_2, (10, parameters["nrep"]))
+            
+            # Get prediction and update prediction counts
+            predicted_class, _ = get_prediction(S_2)
+            prediction_counts[predicted_class] += 1
+            
+            # Send updated prediction counts to the GUI
+            prediction_history_queue.put(prediction_counts)
 
             output_queue.put((S_2, R1, S_1, R2, time.time()))
 
