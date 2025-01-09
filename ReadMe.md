@@ -58,10 +58,11 @@ This sophisticated script simulates neural decoding experiments, providing a rob
 *   **Adaptable Framework:** Features a modular design and comprehensive documentation to facilitate effortless extension and modification for specific research requirements, promoting code reusability and adaptability.
 </details>
 
-
 ## Live Decoding in Action
 
-![Raster plot](raster_plot.png)
+![Live Decoding](gif1.gif)
+![Live Decoding](gif2.gif)
+![Live Decoding](gif3.gif)
 
 <details>
   <summary>Delving into the Neuroscience Underlying the Raster Plot</summary>
