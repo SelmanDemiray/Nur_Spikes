@@ -12,6 +12,11 @@ The **Spiking Neural Network (SNN) Application** is a Python-based tool designed
 - **Export Visualizations:** Generate interactive HTML visualizations of the network.
 - **Debug Terminal:** Integrated debug terminal within the GUI for real-time error tracking.
 
+## Live Decoding in Action
+![Live Decoding](gif1.gif)
+![Live Decoding](gif2.gif)
+![Live Decoding](gif3.gif)
+
 ## Installation
 ### Prerequisites
 - Python 3.7 or higher
