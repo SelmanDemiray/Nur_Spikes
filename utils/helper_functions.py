@@ -500,16 +500,29 @@ def record_live(W0, W1, parameters, input_queue, output_queue, param_queue, pred
 
 def safe_normalize(array, eps=1e-8):
     """Safely normalize an array to [0, 1] range with epsilon to prevent divide by zero."""
-    if array is None or array.size == 0:
-        return None
-    
-    array_min = np.min(array)
-    array_max = np.max(array)
+    array = np.nan_to_num(array, nan=0.0, posinf=0.0, neginf=0.0)
+    array_min = array.min()
+    array_max = array.max()
     denominator = array_max - array_min
-    
-    # If array is constant or nearly constant, return scaled values instead of zeros
     if denominator < eps:
-        return np.ones_like(array) * 0.5
-    
+        return np.zeros_like(array)
     normalized = (array - array_min) / (denominator + eps)
-    return np.clip(normalized, 0, 1)  # Ensure values are in [0, 1]
+    return normalized
+
+def advanced_metrics(spike_data):
+    """Compute extended metrics for spikes."""
+    avg_spikes = spike_data.mean()
+    std_spikes = spike_data.std()
+    return {
+        "avg_spikes": avg_spikes,
+        "std_spikes": std_spikes
+    }
+
+def debug_print(message: str):
+    """Print debug messages to the debug terminal."""
+    print(message)  # Ensure this is redirected to the GUI's debug terminal
+
+def calculate_spike_rate(spikes, elapsed_time):
+    """Calculate spike rate given spike data and elapsed time."""
+    total_spikes = np.sum(spikes)
+    return total_spikes / elapsed_time if elapsed_time > 0 else 0

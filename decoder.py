@@ -26,7 +26,9 @@ from utils.helper_functions import (
     export_network_visualization,
     optimize_weights,
     auto_tune_parameters,
-    safe_normalize
+    safe_normalize,
+    advanced_metrics,
+    debug_print
 )
 
 if USE_CUPY:
@@ -39,7 +41,8 @@ def run_experiment_live(parameters):
         "batch_size": 32,
         "target_rate": 10,
         "adaptive_learning": True,
-        "use_homeostatic": True
+        "use_homeostatic": True,
+        "max_dynamic_layers": 10  # Ensure max_dynamic_layers is included
     })
     
     # Initialize adaptive learning and homeostatic plasticity
@@ -515,6 +518,106 @@ def run_experiment_live(parameters):
         # Schedule the next update
         root.after(500, update_prediction_table)  # Update every 500 ms
 
+    dynamic_layers = []
+
+    def add_new_layer(W_prev, layer_index):
+        """Add a new layer based on previous layer's weights."""
+        new_layer_size = max(1, W_prev.shape[0] // 2)  # Ensure non-zero size
+        W_new = np.random.uniform(-1, 1, size=(new_layer_size, W_prev.shape[0]))
+        if USE_CUPY:
+            W_new = cp.asarray(W_new)
+        dynamic_layers.append(W_new)
+        return W_new
+
+    def update_dynamic_layers(r2=None):
+        """Update dynamic layers based on spike activity."""
+        if len(dynamic_layers) == 0 or r2 is None:
+            return
+
+        MAX_DYNAMIC_LAYERS = parameters["max_dynamic_layers"]  # Use parameters dictionary
+
+        for i, W in enumerate(dynamic_layers):
+            if i == 0:
+                prev_layer_output = static_input
+                if prev_layer_output.shape[0] != W.shape[1]:
+                    prev_layer_output = prev_layer_output[:W.shape[1], :]
+            else:
+                prev_layer_output = dynamic_layers[i-1]
+
+            # Ensure prev_layer_output is a CuPy array if USE_CUPY is True
+            if USE_CUPY and not isinstance(prev_layer_output, cp.ndarray):
+                prev_layer_output = cp.asarray(prev_layer_output)
+
+            # Debug prints to check dimensions
+            debug_print(f"Layer {i + 2}: W.shape = {W.shape}, prev_layer_output.shape = {prev_layer_output.shape}")
+
+            # Add shape verification
+            if W.shape[1] != prev_layer_output.shape[0]:
+                debug_print(f"Shape mismatch: W has {W.shape[1]} columns but prev_layer_output has {prev_layer_output.shape[0]} rows.")
+                try:
+                    if prev_layer_output.size == W.shape[1]:
+                        prev_layer_output = prev_layer_output.flatten()
+                    else:
+                        debug_print("Shape mismatch persists. Skipping layer.")
+                        continue
+                except Exception as e:
+                    debug_print(f"Failed to reshape prev_layer_output: {e}")
+                    continue  # Skip updating this layer
+
+            # Calculate new layer activity
+            if USE_CUPY:
+                R_new = cp.dot(W, prev_layer_output)
+            else:
+                R_new = np.dot(W, prev_layer_output)
+
+            # Generate spikes from R_new using Poisson spiking
+            if USE_CUPY:
+                spikes = cp.random.poisson(lam=R_new)
+                spike_rate = max(cp.mean(spikes), 0)
+            else:
+                spikes = poisson.rvs(mu=R_new)
+                spike_rate = max(np.mean(spikes), 0)
+            debug_print(f"Layer {i + 2} Spike Rate: {spike_rate}")
+
+            spike_rate = float(spike_rate) if not np.isnan(spike_rate) else 0.0
+
+            if spike_rate > parameters["spike_threshold"]:
+                if len(dynamic_layers) < MAX_DYNAMIC_LAYERS:
+                    add_new_layer(W, i + 2)
+                    debug_print(f"Adding new layer {i + 3} as spike rate {spike_rate} exceeds threshold.")
+                else:
+                    debug_print("Maximum number of dynamic layers reached. No new layers will be added.")
+
+    def visualize_dynamic_layers():
+        """Visualize dynamic layers in the GUI."""
+        for i, W in enumerate(dynamic_layers):
+            layer_window = tk.Toplevel(root)
+            layer_window.title(f"Neuron Activity - Layer {i + 2}")
+            num_neurons = W.shape[0]
+            grid_size = int(np.ceil(np.sqrt(num_neurons)))
+            canvas_width = grid_size * 50
+            canvas_height = grid_size * 50
+            layer_canvas = tk.Canvas(layer_window, width=canvas_width, height=canvas_height)
+            layer_canvas.pack()
+            neuron_rects = []
+            for j in range(num_neurons):
+                row = j // grid_size
+                col = j % grid_size
+                rect = layer_canvas.create_rectangle(
+                    col * 50, row * 50,
+                    col * 50 + 40, row * 50 + 40,
+                    fill="blue"
+                )
+                neuron_rects.append(rect)
+
+    # Initialize the first dynamic layer immediately
+    add_new_layer(W1, 2)
+
+    def calculate_spike_rate(spikes, elapsed_time):
+        if elapsed_time <= 0:
+            return 0
+        return float(np.sum(spikes)) / elapsed_time
+
     def update_plot():
         nonlocal W0, W1
         nonlocal start_time, total_spikes_0, total_spikes_1, image_loaded, static_input, rate_changes_0, rate_changes_1
@@ -525,187 +628,208 @@ def run_experiment_live(parameters):
         elapsed_time = 0
         
         try:
-            if not output_queue.empty():
-                S2, R1, S1, R2, timestamp = output_queue.get()
-                elapsed_time = timestamp - start_time
-                
-                # Update performance monitor
-                computation_time = time.time() - timestamp
-                perf_monitor.update(S2, None, computation_time)
-                
-                # Calculate spike rates
-                spike_rate_0 = total_spikes_0 / elapsed_time if elapsed_time > 0 else 0
-                spike_rate_1 = total_spikes_1 / elapsed_time if elapsed_time > 0 else 0
-                
-                # Update spike statistics for Layer 0
-                spikes_this_frame_0 = np.sum(S1)
-                total_spikes_0 += spikes_this_frame_0
-                spike_count_label_0.config(text=f"Layer 0 Spike Count: {spikes_this_frame_0}")
-                total_spike_count_label_0.config(text=f"Layer 0 Total Spike Count: {total_spikes_0}")
-                spike_rate_label_0.config(text=f"Layer 0 Spike Rate: {spike_rate_0:.2f} Hz")
-
-                # Update spike statistics for Layer 1
-                spikes_this_frame_1 = np.sum(S2)  
-                total_spikes_1 += spikes_this_frame_1
-                spike_count_label_1.config(text=f"Layer 1 Spike Count: {spikes_this_frame_1}")
-                total_spike_count_label_1.config(text=f"Layer 1 Total Spike Count: {total_spikes_1}")
-                spike_rate_label_1.config(text=f"Layer 1 Spike Rate: {spike_rate_1:.2f} Hz")
-
-                # Update rate change lists for both layers
-                if elapsed_time > 0:
-                    rate_changes_0.append(spike_rate_0)
-                    time_points_0.append(elapsed_time)
-                    rate_changes_1.append(spike_rate_1)
-                    time_points_1.append(elapsed_time)
-
-                # Calculate rate of change for both layers
-                roc_0 = calculate_rate_of_change(rate_changes_0, time_points_0)
-                roc_1 = calculate_rate_of_change(rate_changes_1, time_points_1)
-
-                # Update the rate of change graphs
-                ax_rate_0.clear()
-                ax_rate_0.plot(time_points_0, rate_changes_0, color='blue')
-                ax_rate_0.set_title(f"Layer 0 Rate of Change: {roc_0:.2f} Hz/s")
-                ax_rate_0.set_xlabel("Time (s)")
-                ax_rate_0.set_ylabel("Rate (Hz)")
-
-                ax_rate_1.clear()
-                ax_rate_1.plot(time_points_1, rate_changes_1, color='red')
-                ax_rate_1.set_title(f"Layer 1 Rate of Change: {roc_1:.2f} Hz/s")
-                ax_rate_1.set_xlabel("Time (s)")
-                ax_rate_1.set_ylabel("Rate (Hz)")
-                
-                canvas_rate_0.draw()
-                canvas_rate_1.draw()
-
-                # Update neuron visualizations for layer 0
-                if R1 is not None and R1.size > 0:
-                    R1_normalized = safe_normalize(R1)
-                    for i, rect in enumerate(neuron_rects_0):
-                        if i < R1.shape[0]:
-                            color_value = int(R1_normalized[i, 0] * 255)
-                            hex_color = "#{:02x}{:02x}{:02x}".format(color_value, 0, 255 - color_value)
-                            neuron_canvas_0.itemconfig(rect, fill=hex_color)
-
-                # Update neuron visualizations for layer 1
-                for i, rect in enumerate(neuron_rects_1):
-                    if i < S2.shape[0]:
-                        neuron_canvas_1.itemconfig(
-                            rect,
-                            fill="red" if np.sum(S2[i, :]) > 0 else "blue"
-                        )
-
-                # Update raster plots
-                ax0.clear()
-                ax1.clear()
-
-                # Plot Layer 0 activity
-                for i in range(S1.shape[0]):
-                    spike_times = np.where(S1[i, :] > 0)[0] * parameters["dt"]
-                    if len(spike_times) > 0:
-                        ax0.plot(
-                            spike_times + elapsed_time,
-                            np.ones_like(spike_times) * i,
-                            "|k",
-                            markersize=3
-                        )
-
-                # Plot Layer 1 activity
-                for i in range(S2.shape[0]):
-                    spike_times = np.where(S2[i, :] == 1)[0] * parameters["dt"]
-                    if len(spike_times) > 0:
-                        ax1.plot(
-                            spike_times + elapsed_time,
-                            np.ones_like(spike_times) * i,
-                            "|k",
-                            markersize=3
-                        )
-
-                ax0.set_xlabel("Time (s)")
-                ax0.set_ylabel("Neuron Index")
-                ax1.set_xlabel("Time (s)")
-                ax1.set_ylabel("Neuron Index")
-
-                raster_plot0.draw()
-                raster_plot1.draw()
-                
-                # Get prediction and confidence from output spikes (S2)
-                predicted_class, confidence = get_prediction(S2)
-
-                # Update prediction label if confidence is 40% or more
-                if confidence >= 40:
-                    prediction_label.config(text=f"Prediction: {predicted_class} (Confidence: {confidence:.2f}%)")
+            try:
+                data = output_queue.get()
+                if len(data) == 5:
+                    S2, R1, S1, R2, timestamp = data
+                elif len(data) == 4:
+                    S2, R1, S1, timestamp = data
+                    R2 = None
                 else:
-                    prediction_label.config(text="Prediction: Uncertain (Confidence < 40%)")
+                    raise ValueError("Unexpected number of items in output_queue")
+            except ValueError as ve:
+                print(f"Error unpacking output_queue: {ve}")
+                S2, R1, S1, R2, timestamp = None, None, None, None, None
 
-                # Update input and weight visualizations
-                if image_loaded and static_input is not None:
-                    # Reshape the input for display
-                    if USE_CUPY:
-                        input_image = cp.asnumpy(static_input).reshape(28, 28) * 255
-                    else:
-                        input_image = static_input.reshape(28, 28) * 255
-
-                    # Convert to a PIL Image and resize for display
-                    input_image = Image.fromarray(input_image.astype(np.uint8))
-                    # Resize the image to fit the canvas (e.g., 5 times the original size)
-                    resized_image = input_image.resize((140, 140), Image.NEAREST)
-                    # Convert the resized image to a PhotoImage and display it on the canvas
-                    input_photo = ImageTk.PhotoImage(resized_image)
-                    input_canvas.create_image(0, 0, anchor=tk.NW, image=input_photo)
-                    input_canvas.image = input_photo 
-
-
-                # Update weight visualization with proper scaling
-                if weights_loaded and W0 is not None:
-                    try:
-                        # Convert to NumPy if needed
-                        w0_display = cp.asnumpy(W0) if USE_CUPY else W0.copy()
-                        
-                        # Normalize weights for visualization
-                        w0_display = safe_normalize(w0_display)
-                        if w0_display is not None:
-                            # Scale to 0-255 range with proper size
-                            W0_resized = np.kron(w0_display, np.ones((5, 5))) * 255
-                            W0_resized = np.clip(W0_resized, 0, 255).astype(np.uint8)
-                            
-                            # Convert to PIL Image
-                            W0_image = Image.fromarray(W0_resized)
-                            W0_photo = ImageTk.PhotoImage(W0_image)
-                            
-                            # Clear previous image and display new one
-                            weight_canvas.delete("all")
-                            weight_canvas.create_image(0, 0, anchor=tk.NW, image=W0_photo)
-                            weight_canvas.image = W0_photo  # Keep reference
-                    except Exception as e:
-                        print(f"Weight visualization error: {e}")
-
-                # Determine the next input based on button presses or default behavior
-                if image_loaded:
-                    input_queue.put(static_input)  
-                elif not weights_loaded:
-                    if USE_CUPY:
-                        input_queue.put(cp.random.poisson(lam=2, size=(784, 1)))
-                    else:
-                        input_queue.put(np.random.poisson(lam=2, size=(784, 1)))  
-
-                else:
-                    if USE_CUPY:
-                        input_queue.put(cp.random.poisson(lam=0.5, size=(784, 1)))
-                    else:
-                        input_queue.put(np.random.poisson(lam=0.5, size=(784, 1))) 
+            elapsed_time = timestamp - start_time
+            if elapsed_time <= 0:
+                elapsed_time = 1e-6  # Prevent division by zero
             
+            # Update performance monitor
+            computation_time = time.time() - timestamp
+            perf_monitor.update(S2, None, computation_time)
+            
+            # Calculate spike rates using helper function
+            spike_rate_0 = calculate_spike_rate(S1, elapsed_time)
+            spike_rate_1 = calculate_spike_rate(S2, elapsed_time)
+            
+            total_spikes_0 += np.sum(S1)
+            total_spikes_1 += np.sum(S2)
+            
+            # Update spike statistics for Layer 0
+            spike_count_label_0.config(text=f"Layer 0 Spike Count: {np.sum(S1)}")
+            total_spike_count_label_0.config(text=f"Layer 0 Total Spike Count: {total_spikes_0}")
+            spike_rate_label_0.config(text=f"Layer 0 Spike Rate: {spike_rate_0:.2f} Hz")
+
+            # Update spike statistics for Layer 1
+            spike_count_label_1.config(text=f"Layer 1 Spike Count: {np.sum(S2)}")
+            total_spike_count_label_1.config(text=f"Layer 1 Total Spike Count: {total_spikes_1}")
+            spike_rate_label_1.config(text=f"Layer 1 Spike Rate: {spike_rate_1:.2f} Hz")
+
+            # Update Layer 2 spike rate in performance monitor
+            perf_monitor.layer_2_spike_rate = spike_rate_1
+            
+            # Update rate change lists for both layers
+            if elapsed_time > 0:
+                rate_changes_0.append(spike_rate_0)
+                time_points_0.append(elapsed_time)
+                rate_changes_1.append(spike_rate_1)
+                time_points_1.append(elapsed_time)
+
+            # Calculate rate of change for both layers
+            roc_0 = calculate_rate_of_change(rate_changes_0, time_points_0)
+            roc_1 = calculate_rate_of_change(rate_changes_1, time_points_1)
+
+            # Update the rate of change graphs
+            ax_rate_0.clear()
+            ax_rate_0.plot(time_points_0, rate_changes_0, color='blue')
+            ax_rate_0.set_title(f"Layer 0 Rate of Change: {roc_0:.2f} Hz/s")
+            ax_rate_0.set_xlabel("Time (s)")
+            ax_rate_0.set_ylabel("Rate (Hz)")
+
+            ax_rate_1.clear()
+            ax_rate_1.plot(time_points_1, rate_changes_1, color='red')
+            ax_rate_1.set_title(f"Layer 1 Rate of Change: {roc_1:.2f} Hz/s")
+            ax_rate_1.set_xlabel("Time (s)")
+            ax_rate_1.set_ylabel("Rate (Hz)")
+            
+            canvas_rate_0.draw()
+            canvas_rate_1.draw()
+
+            # Update neuron visualizations for layer 0
+            if R1 is not None and R1.size > 0:
+                R1_normalized = safe_normalize(R1)
+                for i, rect in enumerate(neuron_rects_0):
+                    if i < R1.shape[0]:
+                        color_value = int(R1_normalized[i, 0] * 255)
+                        hex_color = "#{:02x}{:02x}{:02x}".format(color_value, 0, 255 - color_value)
+                        neuron_canvas_0.itemconfig(rect, fill=hex_color)
+
+            # Update neuron visualizations for layer 1
+            for i, rect in enumerate(neuron_rects_1):
+                if i < S2.shape[0]:
+                    neuron_canvas_1.itemconfig(
+                        rect,
+                        fill="red" if np.sum(S2[i, :]) > 0 else "blue"
+                    )
+
+            # Update raster plots
+            ax0.clear()
+            ax1.clear()
+
+            # Plot Layer 0 activity
+            for i in range(S1.shape[0]):
+                spike_times = np.where(S1[i, :] > 0)[0] * parameters["dt"]
+                if len(spike_times) > 0:
+                    ax0.plot(
+                        spike_times + elapsed_time,
+                        np.ones_like(spike_times) * i,
+                        "|k",
+                        markersize=3
+                    )
+
+            # Plot Layer 1 activity
+            for i in range(S2.shape[0]):
+                spike_times = np.where(S2[i, :] == 1)[0] * parameters["dt"]
+                if len(spike_times) > 0:
+                    ax1.plot(
+                        spike_times + elapsed_time,
+                        np.ones_like(spike_times) * i,
+                        "|k",
+                        markersize=3
+                    )
+
+            ax0.set_xlabel("Time (s)")
+            ax0.set_ylabel("Neuron Index")
+            ax1.set_xlabel("Time (s)")
+            ax1.set_ylabel("Neuron Index")
+
+            raster_plot0.draw()
+            raster_plot1.draw()
+            
+            # Get prediction and confidence from output spikes (S2)
+            predicted_class, confidence = get_prediction(S2)
+
+            # Update prediction label if confidence is 40% or more
+            if confidence >= 40:
+                prediction_label.config(text=f"Prediction: {predicted_class} (Confidence: {confidence:.2f}%)")
+            else:
+                prediction_label.config(text="Prediction: Uncertain (Confidence < 40%)")
+
+            # Update input and weight visualizations
+            if image_loaded and static_input is not None:
+                # Reshape the input for display
+                if USE_CUPY:
+                    input_image = cp.asnumpy(static_input).reshape(28, 28) * 255
+                else:
+                    input_image = static_input.reshape(28, 28) * 255
+
+                # Convert to a PIL Image and resize for display
+                input_image = Image.fromarray(input_image.astype(np.uint8))
+                # Resize the image to fit the canvas (e.g., 5 times the original size)
+                resized_image = input_image.resize((140, 140), Image.NEAREST)
+                # Convert the resized image to a PhotoImage and display it on the canvas
+                input_photo = ImageTk.PhotoImage(resized_image)
+                input_canvas.create_image(0, 0, anchor=tk.NW, image=input_photo)
+                input_canvas.image = input_photo 
+
+
+            # Update weight visualization with proper scaling
+            if weights_loaded and W0 is not None:
+                try:
+                    # Convert to NumPy if needed
+                    w0_display = cp.asnumpy(W0) if USE_CUPY else W0.copy()
+                    
+                    # Normalize weights for visualization
+                    w0_display = safe_normalize(w0_display)
+                    if w0_display is not None:
+                        # Scale to 0-255 range with proper size
+                        W0_resized = np.kron(w0_display, np.ones((5, 5))) * 255
+                        W0_resized = np.clip(W0_resized, 0, 255).astype(np.uint8)
+                        
+                        # Convert to PIL Image
+                        W0_image = Image.fromarray(W0_resized)
+                        W0_photo = ImageTk.PhotoImage(W0_image)
+                        
+                        # Clear previous image and display new one
+                        weight_canvas.delete("all")
+                        weight_canvas.create_image(0, 0, anchor=tk.NW, image=W0_photo)
+                        weight_canvas.image = W0_photo  # Keep reference
+                except Exception as e:
+                    print(f"Weight visualization error: {e}")
+
+            # Determine the next input based on button presses or default behavior
+            if image_loaded:
+                input_queue.put(static_input)  
+            elif not weights_loaded:
+                if USE_CUPY:
+                    input_queue.put(cp.random.poisson(lam=2, size=(784, 1)))
+                else:
+                    input_queue.put(np.random.poisson(lam=2, size=(784, 1)))  
+
+            else:
+                if USE_CUPY:
+                    input_queue.put(cp.random.poisson(lam=0.5, size=(784, 1)))
+                else:
+                    input_queue.put(np.random.poisson(lam=0.5, size=(784, 1))) 
+        
             # Apply homeostatic plasticity if enabled
             if parameters["use_homeostatic"] and elapsed_time > 0:
                 W0 = homeostatic.adjust_weights(W0, spike_rate_0)
                 W1 = homeostatic.adjust_weights(W1, spike_rate_1)
-            
+        
             # Update learning rate if adaptive learning is enabled
             if parameters["adaptive_learning"]:
                 learning_rate = adaptive_learning.adapt({
                     'avg_spike_rate': spike_rate_1
                 })
                 parameters['learning_rate'] = learning_rate
+
+            # Update dynamic layers
+            if R2 is not None:
+                update_dynamic_layers(R2)
+            else:
+                print("Warning: R2 is None. Skipping update_dynamic_layers.")
 
         except Exception as e:
             print(f"Error in update_plot: {e}")
@@ -847,6 +971,30 @@ def run_experiment_live(parameters):
     copy_debug_btn = tk.Button(debug_frame, text="Copy Debug", command=copy_debug)
     copy_debug_btn.pack(side=tk.BOTTOM)
     
+    if parameters.get("enable_advanced_metrics", False):
+        metrics_frame = tk.Frame(root)
+        metrics_frame.grid(row=15, column=0, columnspan=4, pady=5)
+        metrics_label = tk.Label(metrics_frame, text="Advanced Metrics:")
+        metrics_label.pack()
+        metrics_value_label = tk.Label(metrics_frame, text="N/A")
+        metrics_value_label.pack()
+
+        def update_advanced_metrics():
+            if not output_queue.empty():
+                S2, _, S1, _, _ = output_queue.get()
+                adv = advanced_metrics(S2)
+                text_val = f"Average Spikes: {adv['avg_spikes']:.2f}"
+                if parameters.get("enable_stddev_metrics", False):
+                    text_val += f" | Std Dev: {adv['std_spikes']:.2f}"
+                metrics_value_label.config(text=text_val)
+            root.after(1000, update_advanced_metrics)
+
+        update_advanced_metrics()
+    
+    # Add button to visualize dynamic layers
+    visualize_layers_btn = tk.Button(button_frame, text="Visualize Layers", command=visualize_dynamic_layers)
+    visualize_layers_btn.grid(row=4, column=0, padx=5, pady=5)
+
     root.mainloop()
 
 if __name__ == "__main__":
@@ -854,7 +1002,8 @@ if __name__ == "__main__":
     parameters = {
         "dt": 0.005,
         "gain": 1.0,
-        "nrep": 5
+        "nrep": 5,
+        "spike_threshold": 0.3  # Threshold for adding new layers
     }
 
     # Run the live experiment
